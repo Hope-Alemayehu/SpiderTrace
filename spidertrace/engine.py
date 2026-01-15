@@ -1,6 +1,7 @@
 #core propagation rules
 
 from typing import Dict
+from spidertrace.circuit import Gate
 
 class TraceStep:
     def __init__(self, gate, errors_after):
