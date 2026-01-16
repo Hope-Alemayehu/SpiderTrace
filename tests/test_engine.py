@@ -1,5 +1,3 @@
-print("TEST_ENGINE MODULE LOADED")
-
 from spidertrace.circuit import Gate
 from spidertrace.engine import propagate_errors
 from spidertrace.error import PauliError
