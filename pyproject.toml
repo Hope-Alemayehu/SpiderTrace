@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spidertrace"
+version = "0.1.0"
+description = "Tool for tracing Pauli error propagation through stabilizer circuits"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Hope Alemayehu"}]
+requires-python = ">=3.8"
+dependencies = ["pyzx>=0.7.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=6.0", "black>=21.0", "flake8>=3.8"]
+
+[project.urls]
+Homepage = "https://github.com/Hope-Alemayehu/SpiderTrace"
+
+[project.scripts]
+spidertrace = "spidertrace.display_all_zx:display_all_zx_diagrams"
+spidertrace-test = "spidertrace.test_simple:main"
+spidertrace-custom = "spidertrace.test_custom:test_custom_circuit"
+
+[tool.setuptools.packages.find]
+include = ["spidertrace*"]
