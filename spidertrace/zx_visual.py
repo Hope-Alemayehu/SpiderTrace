@@ -57,32 +57,56 @@ def draw_circuit_only(circuit):
                 
         elif gate.name == "CNOT":
             control, target = gate.qubits
-            
+
             # Add CNOT as Z-spider (control) and X-spider (target)
             control_vertex = g.add_vertex(zx.VertexType.Z, qubit=control, row=gate_row)
             target_vertex = g.add_vertex(zx.VertexType.X, qubit=target, row=gate_row)
-            
+
             # Connect control and target
             g.add_edge((control_vertex, target_vertex))
-            
+
             # Connect to previous vertices or inputs
             for q, vertex in [(control, control_vertex), (target, target_vertex)]:
                 if i == 0:
                     g.add_edge((inputs[q], vertex))
                 else:
-                    prev_vertices = [v for v in g.vertices() 
+                    prev_vertices = [v for v in g.vertices()
                                    if g.qubit(v) == q and g.row(v) < gate_row]
                     if prev_vertices:
                         prev = max(prev_vertices, key=lambda v: g.row(v))
                         g.add_edge((prev, vertex))
-            
+
             # Connect to outputs if this is the last gate
             if i == len(circuit) - 1:
                 g.add_edge((control_vertex, outputs[control]))
                 g.add_edge((target_vertex, outputs[target]))
-        
+
+        elif gate.name == "CZ":
+            control, target = gate.qubits
+
+            # CZ = two Z-spiders connected by a Hadamard edge
+            control_vertex = g.add_vertex(zx.VertexType.Z, qubit=control, row=gate_row)
+            target_vertex = g.add_vertex(zx.VertexType.Z, qubit=target, row=gate_row)
+
+            # Hadamard edge encodes the CZ interaction
+            g.add_edge((control_vertex, target_vertex), zx.EdgeType.HADAMARD)
+
+            for q, vertex in [(control, control_vertex), (target, target_vertex)]:
+                if i == 0:
+                    g.add_edge((inputs[q], vertex))
+                else:
+                    prev_vertices = [v for v in g.vertices()
+                                   if g.qubit(v) == q and g.row(v) < gate_row]
+                    if prev_vertices:
+                        prev = max(prev_vertices, key=lambda v: g.row(v))
+                        g.add_edge((prev, vertex))
+
+            if i == len(circuit) - 1:
+                g.add_edge((control_vertex, outputs[control]))
+                g.add_edge((target_vertex, outputs[target]))
+
         current_row += 2
-    
+
     return g
 
 
@@ -186,32 +210,55 @@ def draw_trace_step(circuit, trace_step, step_index):
                 
         elif gate.name == "CNOT":
             control, target = gate.qubits
-            
+
             # Add CNOT as Z-spider (control) and X-spider (target)
             control_vertex = g.add_vertex(zx.VertexType.Z, qubit=control, row=gate_row)
             target_vertex = g.add_vertex(zx.VertexType.X, qubit=target, row=gate_row)
-            
+
             # Connect control and target
             g.add_edge((control_vertex, target_vertex))
-            
+
             # Connect to previous vertices or inputs
             for q, vertex in [(control, control_vertex), (target, target_vertex)]:
                 if i == 0:
                     g.add_edge((inputs[q], vertex))
                 else:
-                    prev_vertices = [v for v in g.vertices() 
+                    prev_vertices = [v for v in g.vertices()
                                    if g.qubit(v) == q and g.row(v) < gate_row]
                     if prev_vertices:
                         prev = max(prev_vertices, key=lambda v: g.row(v))
                         g.add_edge((prev, vertex))
-            
+
             # Connect to outputs if this is the last gate
             if i == len(circuit) - 1:
                 g.add_edge((control_vertex, outputs[control]))
                 g.add_edge((target_vertex, outputs[target]))
-        
+
+        elif gate.name == "CZ":
+            control, target = gate.qubits
+
+            # CZ = two Z-spiders connected by a Hadamard edge
+            control_vertex = g.add_vertex(zx.VertexType.Z, qubit=control, row=gate_row)
+            target_vertex = g.add_vertex(zx.VertexType.Z, qubit=target, row=gate_row)
+
+            g.add_edge((control_vertex, target_vertex), zx.EdgeType.HADAMARD)
+
+            for q, vertex in [(control, control_vertex), (target, target_vertex)]:
+                if i == 0:
+                    g.add_edge((inputs[q], vertex))
+                else:
+                    prev_vertices = [v for v in g.vertices()
+                                   if g.qubit(v) == q and g.row(v) < gate_row]
+                    if prev_vertices:
+                        prev = max(prev_vertices, key=lambda v: g.row(v))
+                        g.add_edge((prev, vertex))
+
+            if i == len(circuit) - 1:
+                g.add_edge((control_vertex, outputs[control]))
+                g.add_edge((target_vertex, outputs[target]))
+
         current_row += 2
-    
+
     # Add error annotations after the current step
     error_row = len(circuit) * 2 + 1
     for qubit, error_type in trace_step.errors_after.items():

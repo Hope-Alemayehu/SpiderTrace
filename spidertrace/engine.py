@@ -91,4 +91,43 @@ def apply_gate_rules(gate: Gate, errors: Dict[int,str])-> Dict[int,str]:
                 else:
                     new_errors[c] = "Z"
     
+    if gate.name == "CZ":
+        c, t = gate.qubits[0], gate.qubits[1]
+
+        p_c = new_errors.get(c, "I")
+        p_t = new_errors.get(t, "I")
+
+        # Full CZ conjugation table: CZ (p_c ⊗ p_t) CZ, ignoring global phase.
+        # Derived by composing individual single-qubit rules and multiplying Paulis.
+        cz_table = {
+            ("I", "I"): ("I", "I"),
+            ("X", "I"): ("X", "Z"),
+            ("I", "X"): ("Z", "X"),
+            ("Z", "I"): ("Z", "I"),
+            ("I", "Z"): ("I", "Z"),
+            ("Y", "I"): ("Y", "Z"),
+            ("I", "Y"): ("Z", "Y"),
+            ("X", "X"): ("Y", "Y"),
+            ("X", "Z"): ("X", "I"),
+            ("Z", "X"): ("I", "X"),
+            ("X", "Y"): ("Y", "X"),
+            ("Y", "X"): ("X", "Y"),
+            ("Z", "Z"): ("Z", "Z"),
+            ("Z", "Y"): ("I", "Y"),
+            ("Y", "Z"): ("Y", "I"),
+            ("Y", "Y"): ("X", "X"),
+        }
+
+        q_c, q_t = cz_table[(p_c, p_t)]
+
+        if q_c == "I":
+            new_errors.pop(c, None)
+        else:
+            new_errors[c] = q_c
+
+        if q_t == "I":
+            new_errors.pop(t, None)
+        else:
+            new_errors[t] = q_t
+
     return new_errors

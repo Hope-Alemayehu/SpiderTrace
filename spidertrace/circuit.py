@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Gate:
-    name: str   #"H" or "CNOT" only
-    qubits: tuple[int]  #tuple of qubit indices; length=1 for H and 2 for CNOT
+    name: str   #"H", "CNOT", or "CZ"
+    qubits: tuple[int]  #tuple of qubit indices; length=1 for H and 2 for CNOT/CZ
     
 
     """
