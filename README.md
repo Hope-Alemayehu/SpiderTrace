@@ -1,6 +1,6 @@
 # SpiderTrace
 
-SpiderTrace is a small tool that traces how Pauli X and Z errors propagate through stablizre circuits by rewritting ZX diagrams.
+SpiderTrace is a small tool that traces how Pauli X and Z errors propagate through stabilizer circuits by rewriting ZX diagrams.
 
 ## Features
 -  **Error Propagation Engine**: Accurately tracks Pauli errors through quantum circuits
@@ -9,15 +9,15 @@ SpiderTrace is a small tool that traces how Pauli X and Z errors propagate throu
 -  **Comprehensive Output**: See before/after states and step-by-step propagation
 
 ## Constraints 
-SpiderTrace will support:
+SpiderTrace supports:
 - Clifford group only
-- Gates: H, CNOT
-- Errors: single X or Z
+- Gates: H, CNOT, CZ
+- Errors: single-qubit X, Z, or Y (Y errors arise naturally from propagation)
 - Representation: ZX diagram
-- Goal: trace Pauli error Propagation
+- Goal: trace Pauli error propagation
 
 SpiderTrace will not:
-- simulate quantum states
+- Simulate quantum states
 - Support T / arbitrary rotations
 - Do decoding or correction
 
@@ -50,7 +50,8 @@ python display_all_zx.py
 python test_custom.py
 ```
 Follow the interactive prompts to:
-1. Build your circuit with H and CNOT gates
+
+1. Build your circuit with H, CNOT, and CZ gates
 2. Add initial X or Z errors
 3. See the complete error propagation
 4. Generate ZX diagrams
@@ -66,7 +67,8 @@ from spidertrace.error import PauliError
 # Create a circuit
 circuit = [
     Gate("H", (0,)),
-    Gate("CNOT", (0, 1))
+    Gate("CNOT", (0, 1)),
+    Gate("CZ", (0, 1))
 ]
 
 # Add initial errors
@@ -91,37 +93,41 @@ save_complete_visualization(circuit, errors, trace, "my_circuit")
 ## Formal Definition
 (as formal as it gets)
 
-- Error is a symbolic pauli operators attached to a wire/spider
+- Error is a symbolic Pauli operator attached to a wire/spider
 
 - Propagation is conjugation by gates
 
-- Rewrite rules are the algebric identities you can apply to transform diagrams while preserving the overall unitary or effect.
+- Rewrite rules are the algebraic identities you can apply to transform diagrams while preserving the overall unitary or effect.
 
-Hadmard gate
+Hadamard gate
 
-```bash
- Through H:
- H : X ↔ Z 
+```text
+Through H:
+H : X ↔ Z 
 
- is the same as:
- X → H X H = Z
- Z → H Z H = X
-
+is the same as:
+X → H X H = Z
+Z → H Z H = X
 ```
 
-CNOT gate
-For Cnot with control c and target t
+CNOT gate — for CNOT with control `c` and target `t`:
 
-```bash
- X_c => X_c X_t
- Z_t => Z_c Z_t
- X_t => X_t
- Z_c => Z_c
+```text
+X_c => X_c X_t
+Z_t => Z_c Z_t
+X_t => X_t
+Z_c => Z_c
 ```
-Meaning: 
-1. X on control spreads to target
-2. Z on target spreads to control
-3. X on target and Z on control stay the same
+
+CZ gate — for CZ with qubits `c` and `t`:
+
+```text
+X_c => X_c Z_t
+X_t => Z_c X_t
+Z_c => Z_c
+Z_t => Z_t
+```
+Meaning: CZ is symmetric — X on either qubit picks up a Z on the other qubit.
 
 ## Error Propagation Rules
 
@@ -141,13 +147,29 @@ For CNOT with control `c` and target `t`:
 | X on target | X on target (unchanged) |
 | Z on control | Z on control (unchanged) |
 
+### CZ Gate
+
+For CZ with qubits `c` and `t` (symmetric gate):
+
+| Input Error | Output Error |
+|-------------|--------------|
+| X on c | X on c + Z on t |
+| X on t | Z on c + X on t |
+| Z on c | Z on c (unchanged) |
+| Z on t | Z on t (unchanged) |
+| X on c + X on t | Y on c + Y on t |
+| Y on c | Y on c + Z on t |
+| Y on t | Z on c + Y on t |
+
+In ZX calculus, CZ is represented as two Z-spiders connected by a Hadamard edge.
+
 ## Project Structure
 
 ```
 SpiderTrace/
 ├── spidertrace/
 │   ├── __init__.py          # Package exports
-│   ├── circuit.py           # Gate definitions
+│   ├── circuit.py           # Gate definitions (H, CNOT, CZ)
 │   ├── engine.py            # Error propagation engine
 │   ├── error.py             # Pauli error definitions
 │   ├── zx_visual.py         # ZX diagram generation
@@ -183,7 +205,16 @@ errors = [PauliError(0, "X")]
 # Result: X on qubit 0 → X on both qubits 0 and 1
 ```
 
-### Example 3: Multi-Gate Circuit
+### Example 3: CZ Phase Kickback
+
+```python
+circuit = [Gate("CZ", (0, 1))]
+errors = [PauliError(0, "X")]
+
+# Result: X on qubit 0 → X on qubit 0 + Z on qubit 1
+```
+
+### Example 4: Multi-Gate Circuit
 ```python
 circuit = [
     Gate("H", (0,)),
@@ -206,6 +237,7 @@ python test_simple.py
 This tests:
 - Hadamard error propagation (X ↔ Z)
 - CNOT error spreading
+- CZ error propagation and phase kickback
 - Error cancellation and Y error creation
 - Multi-gate circuits
 
@@ -220,7 +252,8 @@ The tool generates PNG files showing:
 ## Contributing
 
 Feel free to extend SpiderTrace with:
-- Additional Clifford gates (S, etc.)
+
+- Additional Clifford gates (S, SWAP, etc.)
 - More error types
 - Enhanced visualization
 - Performance optimizations
