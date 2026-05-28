@@ -1,0 +1,32 @@
+{
+  "0.001": {
+    "logical_error_rate": 0.0,
+    "recall": 0.9999999997674418,
+    "precision": 0.9999999997674418
+  },
+  "0.005": {
+    "logical_error_rate": 0.0,
+    "recall": 0.9999999999586776,
+    "precision": 0.9999999999586776
+  },
+  "0.01": {
+    "logical_error_rate": 0.0,
+    "recall": 0.9999999999776287,
+    "precision": 0.9999999999776287
+  },
+  "0.03": {
+    "logical_error_rate": 0.0008,
+    "recall": 0.997188378622332,
+    "precision": 0.999061032854469
+  },
+  "0.05": {
+    "logical_error_rate": 0.0078,
+    "recall": 0.9820598006579265,
+    "precision": 0.9919463087181749
+  },
+  "0.1": {
+    "logical_error_rate": 0.0766,
+    "recall": 0.8990740740699117,
+    "precision": 0.9216896060706138
+  }
+}
