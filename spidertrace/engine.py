@@ -49,48 +49,31 @@ def apply_gate_rules(gate: Gate, errors: Dict[int,str])-> Dict[int,str]:
                 pass
     
     if gate.name == "CNOT":
-        c, t = gate.qubits[0], gate.qubits[1] 
-        
-        # Check for simultaneous X on control and Z on target
-        x_on_control = c in new_errors and new_errors[c] == "X"
-        z_on_target = t in new_errors and new_errors[t] == "Z"
-        
-        if x_on_control and z_on_target:
-            # X on control + Z on target = Y on both
-            new_errors[c] = "Y"
-            new_errors[t] = "Y"
-        else:
-            # Handle individual cases
-            # X on control spreads to target
-            if x_on_control:
-                if t in new_errors:
-                    if new_errors[t] == "X":
-                        # X * X = I (cancel out)
-                        del new_errors[t]
-                    elif new_errors[t] == "Z":
-                        # X * Z = Y
-                        new_errors[t] = "Y"
-                    else:
-                        # No error on target, add X
-                        new_errors[t] = "X"
-                else:
-                    new_errors[t] = "X"
-            
-            # Z on target spreads to control
-            if z_on_target:
-                if c in new_errors:
-                    if new_errors[c] == "Z":
-                        # Z * Z = I (cancel out)
-                        del new_errors[c]
-                    elif new_errors[c] == "X":
-                        # Z * X = Y
-                        new_errors[c] = "Y"
-                    else:
-                        # No error on control, add Z
-                        new_errors[c] = "Z"
-                else:
-                    new_errors[c] = "Z"
-    
+        c, t = gate.qubits[0], gate.qubits[1]
+
+        # Full CNOT conjugation via the symplectic (x, z) representation
+        # (I=00, X=10, Z=01, Y=11). This covers every input Pauli -- including
+        # Y on the control or target, which the earlier X/Z-only special-casing
+        # silently dropped. The X-control/Z-target rules below are the standard
+        # CNOT symplectic update; the previously handled cases are a subset:
+        #     x_t' = x_t XOR x_c   (X on control spreads X to target)
+        #     z_c' = z_c XOR z_t   (Z on target spreads Z to control)
+        #     x_c, z_t unchanged
+        _to_xz = {"I": (0, 0), "X": (1, 0), "Z": (0, 1), "Y": (1, 1)}
+        _to_p = {(0, 0): "I", (1, 0): "X", (0, 1): "Z", (1, 1): "Y"}
+
+        xc, zc = _to_xz[new_errors.get(c, "I")]
+        xt, zt = _to_xz[new_errors.get(t, "I")]
+
+        new_c = _to_p[(xc, zc ^ zt)]
+        new_t = _to_p[(xt ^ xc, zt)]
+
+        for q, p in ((c, new_c), (t, new_t)):
+            if p == "I":
+                new_errors.pop(q, None)
+            else:
+                new_errors[q] = p
+
     if gate.name == "CZ":
         c, t = gate.qubits[0], gate.qubits[1]
 
