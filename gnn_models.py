@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import statistics
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -416,18 +417,154 @@ def run_experiment(d: int, p: float, num_shots: int, seeds: List[int],
         summary[key] = {f: agg(per_seed[key], f)
                         for f in ("logical_error_rate", "recall", "precision")}
 
+    config = {"d": d, "p": p, "num_shots": num_shots, "seeds": seeds,
+              "lambda_values": lambda_values, "epochs": epochs}
     results = {
-        "config": {"d": d, "p": p, "num_shots": num_shots, "seeds": seeds,
-                   "lambda_values": lambda_values, "epochs": epochs},
+        "config": config,
         "summary": summary,
         "per_seed": raw_records,
     }
 
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    out_path = Path(out_dir) / f"gnn_d{d}_p{p}.json"
+    # Per-seed results in their own files so concurrent runs don't clobber.
+    for record in raw_records:
+        seed_path = Path(out_dir) / f"gnn_d{d}_p{p}_seed{record['seed']}.json"
+        with open(seed_path, "w") as f:
+            json.dump({"config": config, "seed": record["seed"],
+                       "results": record}, f, indent=2)
+        print(f"\nSaved per-seed results to {seed_path}")
+    summary_path = Path(out_dir) / f"gnn_d{d}_p{p}_summary.json"
+    with open(summary_path, "w") as f:
+        json.dump({"config": config, "summary": summary}, f, indent=2)
+    print(f"Saved summary to {summary_path}")
+    return results
+
+
+# --------------------------------------------------------------------------- #
+# Paired McNemar analysis: GNN-ZX vs GNN-Raw
+# --------------------------------------------------------------------------- #
+@torch.no_grad()
+def _per_shot_correct(model, loader) -> np.ndarray:
+    """Boolean array (one entry per shot, in loader order) of (pred == label).
+    loader must be shuffle=False so two models align shot-for-shot."""
+    model.eval()
+    device = next(model.parameters()).device
+    out = []
+    for data in loader:
+        data = data.to(device)
+        flip_logit, _ = model(data)
+        pred = (torch.sigmoid(flip_logit) > 0.5).long()
+        y = data.y.view(-1).long()
+        out.append((pred == y).cpu().numpy())
+    return np.concatenate(out) if out else np.zeros(0, dtype=bool)
+
+
+def _train_to_best(model_type: str, num_qubits: int, train_loader, val_loader,
+                   epochs: int, lambda_aux: float, device):
+    """Train one model and load its best-by-val-loss checkpoint. Returns
+    (model, best_val_loss)."""
+    model = MODEL_REGISTRY[model_type](num_qubits).to(device)
+    config = {"epochs": epochs, "lambda_aux": lambda_aux,
+              "pos_weight": None, "model_type": model_type}
+    history, best_state = train_model(model, train_loader, val_loader, config)
+    model.load_state_dict(best_state)
+    best_val = min(history["val_loss"]) if history["val_loss"] else float("inf")
+    return model, best_val
+
+
+def mcnemar_test(b: int, c: int) -> Dict[str, float]:
+    """McNemar's test on discordant counts b, c (b + c discordant pairs).
+
+    Returns the continuity-corrected chi-square statistic with its p-value
+    (chi-square, df=1) and the exact two-sided binomial p-value (preferred when
+    b + c is small). b and c are the two discordant cells.
+    """
+    n = b + c
+    if n == 0:
+        return {"b": b, "c": c, "n_discordant": 0,
+                "chi2_cc": 0.0, "p_chi2_cc": 1.0, "p_exact": 1.0}
+    # Edwards continuity-corrected chi-square, df = 1.
+    chi2 = (abs(b - c) - 1.0) ** 2 / n
+    p_chi2 = math.erfc(math.sqrt(chi2 / 2.0))            # survival fn of chi2_1
+    # Exact two-sided binomial (n trials, prob 0.5).
+    k = min(b, c)
+    cdf = sum(math.comb(n, i) for i in range(k + 1)) * (0.5 ** n)
+    p_exact = min(1.0, 2.0 * cdf)
+    return {"b": b, "c": c, "n_discordant": n,
+            "chi2_cc": chi2, "p_chi2_cc": p_chi2, "p_exact": p_exact}
+
+
+def run_mcnemar_zx_vs_raw(d: int, p: float, num_shots: int, seeds: List[int],
+                          lambda_values: List[float], epochs: int = 100,
+                          out_dir: str = "results") -> Dict:
+    """Paired McNemar comparison of GNN-ZX vs GNN-Raw.
+
+    For each seed: build ONE dataset, train GNN-Raw (lambda=lambda_values[0]) and
+    GNN-ZX (best lambda by val loss, as in run_experiment), then score BOTH on
+    the identical natural-distribution val shots. Discordant pairs (exactly one
+    model correct) are pooled across all seeds and fed to McNemar's test.
+
+    Cell convention: b = Raw correct & ZX wrong; c = ZX correct & Raw wrong.
+    c > b favors ZX.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    b_total = c_total = both = neither = 0
+    per_seed = []
+
+    for seed in seeds:
+        print(f"\n=== McNemar seed {seed} (d={d}, p={p}, shots={num_shots}) ===")
+        train_loader, val_loader, num_qubits = build_loaders(d, p, num_shots, seed)
+
+        print("  -- training GNN-Raw --")
+        raw_model, _ = _train_to_best("Raw", num_qubits, train_loader, val_loader,
+                                      epochs, lambda_values[0], device)
+        zx_best_model, zx_best_val, zx_best_lam = None, float("inf"), None
+        for lam in lambda_values:
+            print(f"  -- training GNN-ZX lambda={lam} --")
+            m, v = _train_to_best("ZX", num_qubits, train_loader, val_loader,
+                                  epochs, lam, device)
+            if v < zx_best_val:
+                zx_best_val, zx_best_model, zx_best_lam = v, m, lam
+
+        raw_ok = _per_shot_correct(raw_model, val_loader)
+        zx_ok = _per_shot_correct(zx_best_model, val_loader)
+        assert raw_ok.shape == zx_ok.shape, "paired shots misaligned"
+
+        b = int(np.sum(raw_ok & ~zx_ok))      # Raw correct, ZX wrong
+        c = int(np.sum(~raw_ok & zx_ok))      # ZX correct, Raw wrong
+        bb = int(np.sum(raw_ok & zx_ok))
+        nn_ = int(np.sum(~raw_ok & ~zx_ok))
+        b_total += b; c_total += c; both += bb; neither += nn_
+        print(f"  seed {seed}: n={raw_ok.size}  both_correct={bb}  neither={nn_}  "
+              f"Raw-only(b)={b}  ZX-only(c)={c}  zx_lambda={zx_best_lam}")
+        per_seed.append({"seed": seed, "n": int(raw_ok.size), "both_correct": bb,
+                         "neither_correct": nn_, "b_raw_only": b, "c_zx_only": c,
+                         "zx_lambda": zx_best_lam})
+
+    stats = mcnemar_test(b_total, c_total)
+    favored = "ZX" if c_total > b_total else ("Raw" if b_total > c_total else "tie")
+    print("\n=== McNemar (ZX vs Raw), pooled across seeds ===")
+    print(f"  contingency: both_correct={both}  neither_correct={neither}  "
+          f"Raw-only(b)={b_total}  ZX-only(c)={c_total}  discordant={stats['n_discordant']}")
+    print(f"  chi2 (cont. corrected, df=1) = {stats['chi2_cc']:.4f}  "
+          f"p = {stats['p_chi2_cc']:.4g}")
+    print(f"  exact two-sided binomial p   = {stats['p_exact']:.4g}")
+    print(f"  favored model: {favored}")
+
+    results = {
+        "config": {"d": d, "p": p, "num_shots": num_shots, "seeds": seeds,
+                   "lambda_values": lambda_values, "epochs": epochs},
+        "comparison": "ZX_vs_Raw",
+        "cell_convention": "b = Raw correct & ZX wrong; c = ZX correct & Raw wrong",
+        "pooled": {"both_correct": both, "neither_correct": neither, **stats,
+                   "favored": favored},
+        "per_seed": per_seed,
+    }
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_path = Path(out_dir) / f"mcnemar_zx_vs_raw_d{d}_p{p}.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"\nSaved results to {out_path}")
+    print(f"\nSaved McNemar results to {out_path}")
     return results
 
 
@@ -488,10 +625,17 @@ def main():
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--lambdas", type=float, nargs="+", default=[0.05, 0.1, 0.5, 1.0])
+    ap.add_argument("--mcnemar", action="store_true",
+                    help="paired McNemar test (GNN-ZX vs GNN-Raw) instead of the full experiment")
     args = ap.parse_args()
 
     if args.dry_run:
         _dry_run()
+        return
+
+    if args.mcnemar:
+        run_mcnemar_zx_vs_raw(args.d, args.p, args.shots, args.seeds, args.lambdas,
+                              epochs=args.epochs)
         return
 
     run_experiment(args.d, args.p, args.shots, args.seeds, args.lambdas,
