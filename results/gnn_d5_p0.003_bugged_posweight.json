@@ -1,0 +1,117 @@
+{
+  "config": {
+    "d": 5,
+    "p": 0.003,
+    "num_shots": 5000,
+    "seeds": [
+      1
+    ],
+    "lambda_values": [
+      0.01
+    ],
+    "epochs": 10
+  },
+  "summary": {
+    "A": {
+      "logical_error_rate": {
+        "mean": 0.155,
+        "std": 0.0,
+        "values": [
+          0.155
+        ]
+      },
+      "recall": {
+        "mean": 0.0,
+        "std": 0.0,
+        "values": [
+          0.0
+        ]
+      },
+      "precision": {
+        "mean": 0.0,
+        "std": 0.0,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "Raw": {
+      "logical_error_rate": {
+        "mean": 0.163,
+        "std": 0.0,
+        "values": [
+          0.163
+        ]
+      },
+      "recall": {
+        "mean": 0.05806451612903226,
+        "std": 0.0,
+        "values": [
+          0.05806451612903226
+        ]
+      },
+      "precision": {
+        "mean": 0.34615384615384615,
+        "std": 0.0,
+        "values": [
+          0.34615384615384615
+        ]
+      }
+    },
+    "ZX": {
+      "logical_error_rate": {
+        "mean": 0.155,
+        "std": 0.0,
+        "values": [
+          0.155
+        ]
+      },
+      "recall": {
+        "mean": 0.0,
+        "std": 0.0,
+        "values": [
+          0.0
+        ]
+      },
+      "precision": {
+        "mean": 0.0,
+        "std": 0.0,
+        "values": [
+          0.0
+        ]
+      }
+    }
+  },
+  "per_seed": [
+    {
+      "seed": 1,
+      "A": {
+        "metrics": {
+          "logical_error_rate": 0.155,
+          "recall": 0.0,
+          "precision": 0.0
+        },
+        "lambda_aux": 0.0
+      },
+      "Raw": {
+        "metrics": {
+          "logical_error_rate": 0.163,
+          "recall": 0.05806451612903226,
+          "precision": 0.34615384615384615
+        },
+        "lambda_aux": 0.01
+      },
+      "ZX": {
+        "metrics": {
+          "logical_error_rate": 0.155,
+          "recall": 0.0,
+          "precision": 0.0
+        },
+        "lambda_aux": 0.01,
+        "lambda_sweep": {
+          "0.01": 0.35350607335567474
+        }
+      }
+    }
+  ]
+}

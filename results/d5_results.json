@@ -6,29 +6,29 @@
       "precision": 0.9999999997142857
     },
     "0.005": {
-      "logical_error_rate": 0.0002,
+      "logical_error_rate": 0.0,
       "recall": 0.9999999999408283,
-      "precision": 0.994117647000346
+      "precision": 0.9999999999408283
     },
     "0.01": {
-      "logical_error_rate": 0.003,
+      "logical_error_rate": 0.0,
       "recall": 0.9999999999656357,
-      "precision": 0.9509803921257849
+      "precision": 0.9999999999656357
     },
     "0.03": {
-      "logical_error_rate": 0.0176,
-      "recall": 0.9952718676005287,
-      "precision": 0.9092872570096189
+      "logical_error_rate": 0.0064,
+      "recall": 0.9775413711468376,
+      "precision": 0.984523809512089
     },
     "0.05": {
-      "logical_error_rate": 0.0504,
-      "recall": 0.9897959183595778,
-      "precision": 0.8406666666610623
+      "logical_error_rate": 0.021,
+      "recall": 0.9583987441055072,
+      "precision": 0.9591516103616721
     },
     "0.1": {
-      "logical_error_rate": 0.1944,
-      "recall": 0.9560327198315132,
-      "precision": 0.6785195936114713
+      "logical_error_rate": 0.134,
+      "recall": 0.8256646216726705,
+      "precision": 0.8307613168681546
     }
   },
   "BaselineB": {
@@ -38,29 +38,29 @@
       "precision": 0.9999999997142857
     },
     "0.005": {
-      "logical_error_rate": 0.0004,
+      "logical_error_rate": 0.0002,
       "recall": 0.9940828401778649,
-      "precision": 0.9940828401778649
+      "precision": 0.9999999999404762
     },
     "0.01": {
-      "logical_error_rate": 0.001,
+      "logical_error_rate": 0.0004,
       "recall": 0.9965635738489154,
-      "precision": 0.9863945577895784
+      "precision": 0.9965635738489154
     },
     "0.03": {
-      "logical_error_rate": 0.0056,
-      "recall": 0.9929078014067032,
-      "precision": 0.9744779582253541
+      "logical_error_rate": 0.0036,
+      "recall": 0.9917257683097904,
+      "precision": 0.9870588235177993
     },
     "0.05": {
-      "logical_error_rate": 0.018,
-      "recall": 0.9843014128651154,
-      "precision": 0.9471299093584055
+      "logical_error_rate": 0.0122,
+      "recall": 0.9827315541524119,
+      "precision": 0.9697908597910939
     },
     "0.1": {
-      "logical_error_rate": 0.0626,
-      "recall": 0.961656441712875,
-      "precision": 0.8876828692737722
+      "logical_error_rate": 0.0434,
+      "recall": 0.9498977505063911,
+      "precision": 0.9398077895754183
     }
   },
   "ProposedModel": {
@@ -75,29 +75,29 @@
       "precision": 0.9999999999408283
     },
     "0.01": {
-      "logical_error_rate": 0.0014,
+      "logical_error_rate": 0.0,
       "recall": 0.9999999999656357,
-      "precision": 0.9765100670813252
+      "precision": 0.9999999999656357
     },
     "0.03": {
-      "logical_error_rate": 0.0138,
-      "recall": 0.9917257683097904,
-      "precision": 0.9311875693570345
+      "logical_error_rate": 0.0062,
+      "recall": 0.979905437340663,
+      "precision": 0.9833926453026881
     },
     "0.05": {
-      "logical_error_rate": 0.039,
-      "recall": 0.985871271577819,
-      "precision": 0.8764829029945815
+      "logical_error_rate": 0.0172,
+      "recall": 0.962323390887266,
+      "precision": 0.969936708853086
     },
     "0.1": {
-      "logical_error_rate": 0.1772,
-      "recall": 0.9442740286250293,
-      "precision": 0.7038871951192688
+      "logical_error_rate": 0.1362,
+      "recall": 0.8031697341472231,
+      "precision": 0.841456882695011
     }
   },
   "ProposedModel_lambda_sweep": {
     "0.01": {
-      "best_val_loss": 0.158885086681849,
+      "best_val_loss": 0.06696192825379936,
       "test": {
         "0.001": {
           "logical_error_rate": 0.0,
@@ -110,29 +110,29 @@
           "precision": 0.9999999999408283
         },
         "0.01": {
-          "logical_error_rate": 0.0014,
+          "logical_error_rate": 0.0,
           "recall": 0.9999999999656357,
-          "precision": 0.9765100670813252
+          "precision": 0.9999999999656357
         },
         "0.03": {
-          "logical_error_rate": 0.0138,
-          "recall": 0.9917257683097904,
-          "precision": 0.9311875693570345
+          "logical_error_rate": 0.0062,
+          "recall": 0.979905437340663,
+          "precision": 0.9833926453026881
         },
         "0.05": {
-          "logical_error_rate": 0.039,
-          "recall": 0.985871271577819,
-          "precision": 0.8764829029945815
+          "logical_error_rate": 0.0172,
+          "recall": 0.962323390887266,
+          "precision": 0.969936708853086
         },
         "0.1": {
-          "logical_error_rate": 0.1772,
-          "recall": 0.9442740286250293,
-          "precision": 0.7038871951192688
+          "logical_error_rate": 0.1362,
+          "recall": 0.8031697341472231,
+          "precision": 0.841456882695011
         }
       }
     },
     "0.1": {
-      "best_val_loss": 0.1611832583386451,
+      "best_val_loss": 0.0684922347521099,
       "test": {
         "0.001": {
           "logical_error_rate": 0.0,
@@ -145,64 +145,29 @@
           "precision": 0.9999999999408283
         },
         "0.01": {
-          "logical_error_rate": 0.0022,
+          "logical_error_rate": 0.0,
           "recall": 0.9999999999656357,
-          "precision": 0.9635761589084908
+          "precision": 0.9999999999656357
         },
         "0.03": {
-          "logical_error_rate": 0.011,
-          "recall": 0.994089834503616,
-          "precision": 0.9438832772060171
+          "logical_error_rate": 0.0068,
+          "recall": 0.9763593380499248,
+          "precision": 0.983333333321627
         },
         "0.05": {
-          "logical_error_rate": 0.0374,
-          "recall": 0.985871271577819,
-          "precision": 0.8814035087657446
+          "logical_error_rate": 0.018,
+          "recall": 0.9568288853928036,
+          "precision": 0.9720893141868255
         },
         "0.1": {
-          "logical_error_rate": 0.1764,
-          "recall": 0.9550102249439928,
-          "precision": 0.7017280240394376
+          "logical_error_rate": 0.13,
+          "recall": 0.8154396727974671,
+          "precision": 0.8466029723946571
         }
       }
     },
     "0.5": {
-      "best_val_loss": 0.16234195196758955,
-      "test": {
-        "0.001": {
-          "logical_error_rate": 0.0,
-          "recall": 0.9999999997142857,
-          "precision": 0.9999999997142857
-        },
-        "0.005": {
-          "logical_error_rate": 0.0002,
-          "recall": 0.9999999999408283,
-          "precision": 0.994117647000346
-        },
-        "0.01": {
-          "logical_error_rate": 0.0024,
-          "recall": 0.9999999999656357,
-          "precision": 0.9603960395722642
-        },
-        "0.03": {
-          "logical_error_rate": 0.0142,
-          "recall": 0.994089834503616,
-          "precision": 0.9272326350504164
-        },
-        "0.05": {
-          "logical_error_rate": 0.0414,
-          "recall": 0.9921507064286331,
-          "precision": 0.8651608487278224
-        },
-        "0.1": {
-          "logical_error_rate": 0.188,
-          "recall": 0.9473415132875903,
-          "precision": 0.688847583640562
-        }
-      }
-    },
-    "1.0": {
-      "best_val_loss": 0.1622662435103208,
+      "best_val_loss": 0.06990739531340077,
       "test": {
         "0.001": {
           "logical_error_rate": 0.0,
@@ -215,24 +180,59 @@
           "precision": 0.9999999999408283
         },
         "0.01": {
-          "logical_error_rate": 0.0028,
+          "logical_error_rate": 0.0,
           "recall": 0.9999999999656357,
-          "precision": 0.9540983606244557
+          "precision": 0.9999999999656357
         },
         "0.03": {
-          "logical_error_rate": 0.0136,
-          "recall": 0.994089834503616,
-          "precision": 0.9303097345029833
+          "logical_error_rate": 0.0062,
+          "recall": 0.979905437340663,
+          "precision": 0.9833926453026881
         },
         "0.05": {
-          "logical_error_rate": 0.0382,
-          "recall": 0.9897959183595778,
-          "precision": 0.8763029881801508
+          "logical_error_rate": 0.0184,
+          "recall": 0.9583987441055072,
+          "precision": 0.9690476190399283
         },
         "0.1": {
-          "logical_error_rate": 0.1798,
-          "recall": 0.9447852760687895,
-          "precision": 0.7002652519867364
+          "logical_error_rate": 0.1316,
+          "recall": 0.8164621676849875,
+          "precision": 0.8422995780546293
+        }
+      }
+    },
+    "1.0": {
+      "best_val_loss": 0.07173726325659081,
+      "test": {
+        "0.001": {
+          "logical_error_rate": 0.0,
+          "recall": 0.9999999997142857,
+          "precision": 0.9999999997142857
+        },
+        "0.005": {
+          "logical_error_rate": 0.0,
+          "recall": 0.9999999999408283,
+          "precision": 0.9999999999408283
+        },
+        "0.01": {
+          "logical_error_rate": 0.0,
+          "recall": 0.9999999999656357,
+          "precision": 0.9999999999656357
+        },
+        "0.03": {
+          "logical_error_rate": 0.0076,
+          "recall": 0.9763593380499248,
+          "precision": 0.9786729857703949
+        },
+        "0.05": {
+          "logical_error_rate": 0.0192,
+          "recall": 0.959183673461859,
+          "precision": 0.9652448657111751
+        },
+        "0.1": {
+          "logical_error_rate": 0.1338,
+          "recall": 0.8062372188097842,
+          "precision": 0.8446705945321658
         }
       }
     }

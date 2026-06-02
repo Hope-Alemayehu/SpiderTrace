@@ -1,0 +1,119 @@
+{
+  "config": {
+    "d": 3,
+    "p": 0.01,
+    "num_shots": 10000,
+    "seeds": [
+      3
+    ],
+    "lambda_values": [
+      0.01,
+      0.1
+    ],
+    "epochs": 30
+  },
+  "summary": {
+    "A": {
+      "logical_error_rate": {
+        "mean": 0.24,
+        "std": 0.0,
+        "values": [
+          0.24
+        ]
+      },
+      "recall": {
+        "mean": 0.9204244031830239,
+        "std": 0.0,
+        "values": [
+          0.9204244031830239
+        ]
+      },
+      "precision": {
+        "mean": 0.4353826850690088,
+        "std": 0.0,
+        "values": [
+          0.4353826850690088
+        ]
+      }
+    },
+    "Raw": {
+      "logical_error_rate": {
+        "mean": 0.2235,
+        "std": 0.0,
+        "values": [
+          0.2235
+        ]
+      },
+      "recall": {
+        "mean": 0.8753315649867374,
+        "std": 0.0,
+        "values": [
+          0.8753315649867374
+        ]
+      },
+      "precision": {
+        "mean": 0.4520547945205479,
+        "std": 0.0,
+        "values": [
+          0.4520547945205479
+        ]
+      }
+    },
+    "ZX": {
+      "logical_error_rate": {
+        "mean": 0.243,
+        "std": 0.0,
+        "values": [
+          0.243
+        ]
+      },
+      "recall": {
+        "mean": 0.9283819628647215,
+        "std": 0.0,
+        "values": [
+          0.9283819628647215
+        ]
+      },
+      "precision": {
+        "mean": 0.4326328800988875,
+        "std": 0.0,
+        "values": [
+          0.4326328800988875
+        ]
+      }
+    }
+  },
+  "per_seed": [
+    {
+      "seed": 3,
+      "A": {
+        "metrics": {
+          "logical_error_rate": 0.24,
+          "recall": 0.9204244031830239,
+          "precision": 0.4353826850690088
+        },
+        "lambda_aux": 0.0
+      },
+      "Raw": {
+        "metrics": {
+          "logical_error_rate": 0.2235,
+          "recall": 0.8753315649867374,
+          "precision": 0.4520547945205479
+        },
+        "lambda_aux": 0.01
+      },
+      "ZX": {
+        "metrics": {
+          "logical_error_rate": 0.243,
+          "recall": 0.9283819628647215,
+          "precision": 0.4326328800988875
+        },
+        "lambda_aux": 0.01,
+        "lambda_sweep": {
+          "0.01": 0.5804698467254639,
+          "0.1": 0.6042261570692062
+        }
+      }
+    }
+  ]
+}

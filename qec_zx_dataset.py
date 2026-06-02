@@ -304,26 +304,42 @@ def _accumulate_onehot(pauli_indices: np.ndarray, fired_cols: np.ndarray,
 # --------------------------------------------------------------------------- #
 # 5. Graph construction from a single syndrome
 # --------------------------------------------------------------------------- #
+# edge_attr layout: [dx, dy, dt, |d|, is_boundary]
+EDGE_ATTR_DIM = 5
+
+
 def build_graph(fired_detectors: np.ndarray, coords: np.ndarray,
                 k: int = 6) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Defect-graph: nodes = fired detectors, space-time kNN edges.
+    """Defect-graph: nodes = fired detectors + one global node, space-time kNN
+    edges between defects plus boundary edges to the global node.
 
-    Returns (node_feat (n,4), edge_index (2,E), edge_attr (E,4)).
-    Node feature = [x, y, t, is_virtual]. A single virtual node is added so
-    empty syndromes still yield a valid 1-node graph (anchor for readout).
+    Returns (node_feat (n+1, 4), edge_index (2, E), edge_attr (E, 5)).
+    Node feature = [x, y, t, is_virtual]. A single global/virtual node (always
+    present, last index) is connected bidirectionally to every fired detector.
+    It gives the message passing an O(1)-diameter hub (so information crosses
+    the lattice without needing one MP layer per hop), serves as a boundary
+    anchor, and is the readout anchor for empty syndromes.
+
+    edge_attr = [dx, dy, dt, |d|, is_boundary]: defect-defect edges carry the
+    space-time displacement with is_boundary=0; global-node edges carry zeros
+    with is_boundary=1 (the displacement to a non-physical node is meaningless;
+    the flag is the signal).
     """
     n = len(fired_detectors)
+    virtual = np.array([[0, 0, 0, 1]], dtype=np.float32)   # is_virtual=1
+
     if n == 0:
-        # virtual-only graph
-        x = np.array([[0, 0, 0, 1]], dtype=np.float32)
+        # global node only
         ei = np.zeros((2, 0), dtype=np.int64)
-        ea = np.zeros((0, 4), dtype=np.float32)
-        return x, ei, ea
+        ea = np.zeros((0, EDGE_ATTR_DIM), dtype=np.float32)
+        return virtual, ei, ea
 
     pos = coords[fired_detectors]                       # (n,3)
-    x = np.concatenate([pos, np.zeros((n, 1), np.float32)], axis=1)  # is_virtual=0
+    real = np.concatenate([pos, np.zeros((n, 1), np.float32)], axis=1)  # is_virtual=0
+    x = np.concatenate([real, virtual], axis=0)         # (n+1, 4); global node = index n
+    g = n                                               # global node index
 
-    # pairwise space-time distances
+    # pairwise space-time distances among defects
     diff = pos[:, None, :] - pos[None, :, :]            # (n,n,3)
     dist = np.linalg.norm(diff, axis=2)
     np.fill_diagonal(dist, np.inf)
@@ -334,15 +350,18 @@ def build_graph(fired_detectors: np.ndarray, coords: np.ndarray,
         if kk > 0:
             nbrs = np.argpartition(dist[i], kk)[:kk]
             for j in nbrs:
-                src.append(i); dst.append(int(j))
-                attr.append(diff[i, j])                 # (dx,dy,dt)
-    if src:
-        ei = np.array([src, dst], dtype=np.int64)
-        ea = np.array(attr, dtype=np.float32)
-        ea = np.concatenate([ea, np.linalg.norm(ea, axis=1, keepdims=True)], axis=1)  # +|d|
-    else:
-        ei = np.zeros((2, 0), dtype=np.int64)
-        ea = np.zeros((0, 4), dtype=np.float32)
+                j = int(j)
+                d = diff[i, j]
+                src.append(i); dst.append(j)
+                attr.append([d[0], d[1], d[2], float(np.linalg.norm(d)), 0.0])
+
+    # boundary edges: global node <-> every fired detector (both directions)
+    for i in range(n):
+        src.append(i); dst.append(g); attr.append([0.0, 0.0, 0.0, 0.0, 1.0])
+        src.append(g); dst.append(i); attr.append([0.0, 0.0, 0.0, 0.0, 1.0])
+
+    ei = np.array([src, dst], dtype=np.int64)
+    ea = np.array(attr, dtype=np.float32).reshape(-1, EDGE_ATTR_DIM)
     return x, ei, ea
 
 

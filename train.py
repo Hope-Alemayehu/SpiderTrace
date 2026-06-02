@@ -180,12 +180,12 @@ def train_model(model: nn.Module, dataloaders: dict, config: dict) -> list:
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.get("lr", 1e-3))
 
-    # Compute pos_weight from one pass through training data to handle class imbalance
-    n_pos = n_neg = 0
-    for _, _, _, flip_batch in dataloaders["train"]:
-        n_pos += flip_batch.sum().item()
-        n_neg += (1 - flip_batch).sum().item()
-    pos_weight = torch.tensor([n_neg / max(n_pos, 1)]).to(DEVICE)
+    # pos_weight=1.0 (plain BCE). The logical error rate weighs false positives
+    # and false negatives EQUALLY, so the Bayes-optimal rule is to estimate
+    # P(flip|syndrome) and threshold at 0.5 -- which plain BCE learns. A
+    # class-balancing pos_weight (~neg/pos) instead optimizes a recall-weighted
+    # objective, making the model over-predict flips and inflating LER.
+    pos_weight = torch.tensor([1.0]).to(DEVICE)
 
     bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     ce  = nn.CrossEntropyLoss()
