@@ -1,0 +1,25 @@
+{
+  "config": {
+    "d": 5,
+    "p": 0.003,
+    "shots": 50000,
+    "seed": 1,
+    "epochs": 100,
+    "sampler": "natural",
+    "pos_weight": 1.0
+  },
+  "mwpm_ler": 0.0036,
+  "target_ler": 0.012,
+  "by_layers": {
+    "4": {
+      "logical_error_rate": 0.0157,
+      "recall": 0.9162790697674419,
+      "precision": 0.9780141843971631
+    },
+    "8": {
+      "logical_error_rate": 0.1505,
+      "recall": 0.0,
+      "precision": 0.0
+    }
+  }
+}

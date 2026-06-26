@@ -56,11 +56,11 @@ from qec_zx_dataset import (
     to_pyg_list,
 )
 
-NODE_IN_DIM = 4
-EDGE_IN_DIM = 5        # [dx, dy, dt, |d|, is_boundary] (see qec_zx_dataset.build_graph)
+NODE_IN_DIM = 5        # [fired, x, y, t, is_boundary]  (DEM decoding graph)
+EDGE_IN_DIM = 6        # [w_norm, dx, dy, dt, is_boundary_edge, flips_obs]
 HIDDEN = 96
 NUM_PAULI = 4          # {I, X, Y, Z}
-NUM_MP_LAYERS = 4
+NUM_MP_LAYERS = 4      # read at backbone-construction time; override via --mp-layers
 READOUT_DIM = HIDDEN * 3   # add + mean + max -> 288
 
 
@@ -70,9 +70,13 @@ READOUT_DIM = HIDDEN * 3   # add + mean + max -> 288
 class GNNBackbone(nn.Module):
     """4x GINEConv (hidden=96) + 3-way global pooling -> 288-dim graph vector."""
 
-    def __init__(self, hidden: int = HIDDEN, num_layers: int = NUM_MP_LAYERS,
+    def __init__(self, hidden: int = HIDDEN, num_layers: Optional[int] = None,
                  dropout: float = 0.1):
         super().__init__()
+        # Read the module global at construction time (not as a default-arg bound
+        # at def time) so --mp-layers can set NUM_MP_LAYERS before models are built.
+        if num_layers is None:
+            num_layers = NUM_MP_LAYERS
         self.dropout = dropout
         self.node_encoder = nn.Linear(NODE_IN_DIM, hidden)
         self.convs = nn.ModuleList()
@@ -627,7 +631,14 @@ def main():
     ap.add_argument("--lambdas", type=float, nargs="+", default=[0.05, 0.1, 0.5, 1.0])
     ap.add_argument("--mcnemar", action="store_true",
                     help="paired McNemar test (GNN-ZX vs GNN-Raw) instead of the full experiment")
+    ap.add_argument("--mp-layers", type=int, default=None,
+                    help="override the number of message-passing layers (default NUM_MP_LAYERS=4)")
     args = ap.parse_args()
+
+    if args.mp_layers is not None:
+        global NUM_MP_LAYERS
+        NUM_MP_LAYERS = args.mp_layers
+        print(f"[config] NUM_MP_LAYERS = {NUM_MP_LAYERS}")
 
     if args.dry_run:
         _dry_run()

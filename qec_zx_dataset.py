@@ -302,67 +302,131 @@ def _accumulate_onehot(pauli_indices: np.ndarray, fired_cols: np.ndarray,
 
 
 # --------------------------------------------------------------------------- #
-# 5. Graph construction from a single syndrome
+# 5. DEM-derived decoding graph (the structure MWPM consumes)
 # --------------------------------------------------------------------------- #
-# edge_attr layout: [dx, dy, dt, |d|, is_boundary]
-EDGE_ATTR_DIM = 5
+# Node feature layout: [fired, x, y, t, is_boundary]            -> NODE_FEAT_DIM
+# Edge feature layout: [w_norm, dx, dy, dt, is_boundary_edge, flips_obs] -> EDGE_FEAT_DIM
+NODE_FEAT_DIM = 5
+EDGE_FEAT_DIM = 6
 
 
-def build_graph(fired_detectors: np.ndarray, coords: np.ndarray,
-                k: int = 6) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Defect-graph: nodes = fired detectors + one global node, space-time kNN
-    edges between defects plus boundary edges to the global node.
+@dataclass
+class DemGraph:
+    """Fixed decoding-graph topology for a circuit, derived from the DEM.
 
-    Returns (node_feat (n+1, 4), edge_index (2, E), edge_attr (E, 5)).
-    Node feature = [x, y, t, is_virtual]. A single global/virtual node (always
-    present, last index) is connected bidirectionally to every fired detector.
-    It gives the message passing an O(1)-diameter hub (so information crosses
-    the lattice without needing one MP layer per hop), serves as a boundary
-    anchor, and is the readout anchor for empty syndromes.
-
-    edge_attr = [dx, dy, dt, |d|, is_boundary]: defect-defect edges carry the
-    space-time displacement with is_boundary=0; global-node edges carry zeros
-    with is_boundary=1 (the displacement to a non-physical node is meaningless;
-    the flag is the signal).
+    Nodes 0..num_detectors-1 are detectors; the last node (index num_detectors)
+    is the single boundary node. ``static_node_feat`` holds [x, y, t, is_boundary]
+    (the part that does NOT vary per shot); per shot we prepend the ``fired`` bit.
+    Edges/edge_attr are fully fixed across shots.
     """
-    n = len(fired_detectors)
-    virtual = np.array([[0, 0, 0, 1]], dtype=np.float32)   # is_virtual=1
+    num_nodes: int
+    boundary_index: int
+    static_node_feat: np.ndarray   # (num_nodes, 4): [x_norm, y_norm, t_norm, is_boundary]
+    edge_index: np.ndarray         # (2, E_directed)
+    edge_attr: np.ndarray          # (E_directed, EDGE_FEAT_DIM)
 
-    if n == 0:
-        # global node only
-        ei = np.zeros((2, 0), dtype=np.int64)
-        ea = np.zeros((0, EDGE_ATTR_DIM), dtype=np.float32)
-        return virtual, ei, ea
 
-    pos = coords[fired_detectors]                       # (n,3)
-    real = np.concatenate([pos, np.zeros((n, 1), np.float32)], axis=1)  # is_virtual=0
-    x = np.concatenate([real, virtual], axis=0)         # (n+1, 4); global node = index n
-    g = n                                               # global node index
+def build_dem_graph(circuit: stim.Circuit) -> DemGraph:
+    """Build the fixed decoding graph from the decomposed detector error model.
 
-    # pairwise space-time distances among defects
-    diff = pos[:, None, :] - pos[None, :, :]            # (n,n,3)
-    dist = np.linalg.norm(diff, axis=2)
-    np.fill_diagonal(dist, np.inf)
+    Each graphlike DEM component flips 1 or 2 detectors (verified: no hyperedges).
+    A 2-detector component is an edge between those detectors; a 1-detector
+    component is a half-edge to the single boundary node. Parallel mechanisms on
+    the same endpoint-set are merged with the XOR rule
+    ``p = (1 - prod(1 - 2*p_i)) / 2`` (as in PyMatching), then the edge weight is
+    ``-log(p / (1 - p))``. Each edge also records whether traversing it flips the
+    logical observable (the matching->correction map MWPM uses).
+    """
+    nd = circuit.num_detectors
+    boundary = nd                                  # single boundary node index
+    num_nodes = nd + 1
 
-    kk = min(k, n - 1) if n > 1 else 0
+    # detector coordinates -> (nd, 3), per-axis normalized to [0, 1]
+    coord_map = circuit.get_detector_coordinates()
+    coords = np.zeros((nd, 3), dtype=np.float64)
+    for di, c in coord_map.items():
+        coords[di, :len(c)] = c[:3]
+    span = coords.max(axis=0) - coords.min(axis=0)
+    span[span == 0] = 1.0
+    coords_norm = (coords - coords.min(axis=0)) / span
+
+    static = np.zeros((num_nodes, 4), dtype=np.float32)
+    static[:nd, :3] = coords_norm
+    static[boundary, 3] = 1.0                      # is_boundary
+
+    dem = circuit.detector_error_model(decompose_errors=True)
+
+    # merge parallel mechanisms by endpoint-set
+    # key = frozenset of detector ids (size 1 or 2); value = [p_combined, obs_parity]
+    merged: dict = {}
+    for inst in dem.flattened():
+        if inst.type != "error":
+            continue
+        p = inst.args_copy()[0]
+        comp = []
+        comps = []
+        for t in inst.targets_copy():
+            if t.is_separator():
+                comps.append(comp); comp = []
+            else:
+                comp.append(t)
+        comps.append(comp)
+        for cc in comps:
+            dets = tuple(sorted(t.val for t in cc if t.is_relative_detector_id()))
+            obs_parity = sum(1 for t in cc if t.is_logical_observable_id()) % 2
+            if not dets:
+                continue                           # 0-detector component (none observed)
+            key = frozenset(dets)
+            if key not in merged:
+                merged[key] = [0.0, obs_parity]
+            # XOR-combine probabilities; obs parity is consistent per endpoint-set
+            pc = merged[key][0]
+            merged[key][0] = pc + p - 2 * pc * p
+            merged[key][1] = obs_parity
+
+    # build directed edges (both directions) with features
     src, dst, attr = [], [], []
-    for i in range(n):
-        if kk > 0:
-            nbrs = np.argpartition(dist[i], kk)[:kk]
-            for j in nbrs:
-                j = int(j)
-                d = diff[i, j]
-                src.append(i); dst.append(j)
-                attr.append([d[0], d[1], d[2], float(np.linalg.norm(d)), 0.0])
+    raw_weights = []
+    edge_specs = []   # (u, v, dx, dy, dt, is_boundary_edge, flips_obs, weight)
+    for key, (pc, obs_parity) in merged.items():
+        pc = min(max(pc, 1e-12), 1 - 1e-12)
+        weight = -np.log(pc / (1 - pc))
+        ds = sorted(key)
+        if len(ds) == 2:
+            u, v = ds
+            d = coords_norm[u] - coords_norm[v]
+            edge_specs.append((u, v, d[0], d[1], d[2], 0.0, float(obs_parity), weight))
+        else:                                       # half-edge to boundary
+            u = ds[0]
+            edge_specs.append((u, boundary, 0.0, 0.0, 0.0, 1.0, float(obs_parity), weight))
+        raw_weights.append(weight)
 
-    # boundary edges: global node <-> every fired detector (both directions)
-    for i in range(n):
-        src.append(i); dst.append(g); attr.append([0.0, 0.0, 0.0, 0.0, 1.0])
-        src.append(g); dst.append(i); attr.append([0.0, 0.0, 0.0, 0.0, 1.0])
+    # normalize weights (z-score across edges) for stable NN input
+    w_arr = np.array(raw_weights, dtype=np.float64)
+    w_mean, w_std = w_arr.mean(), (w_arr.std() or 1.0)
 
-    ei = np.array([src, dst], dtype=np.int64)
-    ea = np.array(attr, dtype=np.float32).reshape(-1, EDGE_ATTR_DIM)
-    return x, ei, ea
+    for (u, v, dx, dy, dt, isb, fobs, w) in edge_specs:
+        w_n = float((w - w_mean) / w_std)
+        feat = [w_n, dx, dy, dt, isb, fobs]
+        # undirected -> emit both directions with identical features
+        src.append(u); dst.append(v); attr.append(feat)
+        src.append(v); dst.append(u); attr.append(feat)
+
+    edge_index = np.array([src, dst], dtype=np.int64) if src else np.zeros((2, 0), np.int64)
+    edge_attr = (np.array(attr, dtype=np.float32).reshape(-1, EDGE_FEAT_DIM)
+                 if attr else np.zeros((0, EDGE_FEAT_DIM), np.float32))
+    return DemGraph(num_nodes, boundary, static, edge_index, edge_attr)
+
+
+def shot_node_features(dem_graph: DemGraph, fired_detectors: np.ndarray) -> np.ndarray:
+    """Per-shot node features: prepend the fired bit to the fixed static features.
+
+    Returns (num_nodes, 5): [fired, x, y, t, is_boundary]. Only the fired column
+    varies per shot; the boundary node is never 'fired'.
+    """
+    fired = np.zeros((dem_graph.num_nodes, 1), dtype=np.float32)
+    fired[fired_detectors, 0] = 1.0                 # boundary index is never in fired_detectors
+    return np.concatenate([fired, dem_graph.static_node_feat], axis=1)
 
 
 # --------------------------------------------------------------------------- #
@@ -371,20 +435,28 @@ def build_graph(fired_detectors: np.ndarray, coords: np.ndarray,
 def sample_tuples(circuit: stim.Circuit, tables: FaultTables,
                   sampler: stim.CompiledDemSampler, num_shots: int,
                   k_edges: int = 6, seed: Optional[int] = None):
-    """Yields dicts of numpy arrays. Convert to torch_geometric.data.Data downstream."""
+    """Yields dicts of numpy arrays. Convert to torch_geometric.data.Data downstream.
+
+    Graph topology is the fixed DEM-derived decoding graph (built once); only the
+    per-detector ``fired`` node feature changes per shot. Targets and labels are
+    unchanged (the single source of truth is the non-decomposed DEM sampler).
+    """
     # ---- THE single source of truth ----
     dets, obs, errs = sampler.sample(
         shots=num_shots, return_errors=True,
         recorded_errors_to_replay=None,
     )
     N = tables.num_qubits
+    dem_graph = build_dem_graph(circuit)            # fixed topology, built once
+    ei = dem_graph.edge_index
+    ea = dem_graph.edge_attr
     for s in range(num_shots):
         fired_cols = np.where(errs[s])[0]
         fired_dets = np.where(dets[s])[0]
 
         raw_t = _accumulate_onehot(None, fired_cols, tables.raw_pauli, N)
         zx_t = _accumulate_onehot(None, fired_cols, tables.zx_pauli, N)
-        x, ei, ea = build_graph(fired_dets, tables.detector_coords, k=k_edges)
+        x = shot_node_features(dem_graph, fired_dets)
         y = int(obs[s, 0])
 
         yield {
