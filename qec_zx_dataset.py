@@ -35,7 +35,7 @@ Swap in SpiderTrace
 -------------------
 ``ZXPropagator`` defines the seam. The reference implementation uses Stim's
 ``FlipSimulator`` (a stabilizer Pauli-frame tracker) and doubles as a
-validation oracle for SpiderTrace. Replace it with a thin adapter around your
+validation oracle for SpiderTrace. Replace it with a thin adapter around the
 engine; everything else is unchanged.
 
 Caveat on sub-tick timing: the reference injects a fault at its ``tick_offset``
