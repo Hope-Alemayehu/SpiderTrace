@@ -27,7 +27,7 @@ def propagate_errors(circuit_sequence, errors):
     return trace
     
 def apply_gate_rules(gate: Gate, errors: Dict[int,str])-> Dict[int,str]:
-    """yes
+    """
     Applies Pauli propagation rules for a single gate.
     
     gate: Gate object
