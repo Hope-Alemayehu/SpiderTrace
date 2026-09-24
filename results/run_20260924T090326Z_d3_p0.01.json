@@ -1,0 +1,159 @@
+{
+  "provenance": {
+    "timestamp_utc": "2026-09-24T08:26:04.827165+00:00",
+    "git_commit": "893a5a3b685ba8dd2b73bb6b2d70c3d16c3e980f",
+    "git_dirty": false,
+    "git_dirty_files": [],
+    "argv": [
+      "qec_run.py",
+      "--d",
+      "3",
+      "--p",
+      "0.01",
+      "--shots",
+      "50000",
+      "--seeds",
+      "1",
+      "--lambdas",
+      "0.01",
+      "0.1",
+      "0.5",
+      "--epochs",
+      "100",
+      "--device",
+      "cuda",
+      "--outdir",
+      "/content/drive/MyDrive/SpiderTrace_results"
+    ],
+    "config": {
+      "d": 3,
+      "p": 0.01,
+      "shots": 50000,
+      "seeds": [
+        1
+      ],
+      "split_seed": 12345,
+      "lambdas": [
+        0.01,
+        0.1,
+        0.5
+      ],
+      "epochs": 100,
+      "device": "cuda",
+      "outdir": "/content/drive/MyDrive/SpiderTrace_results"
+    },
+    "hostname": "9ad10f4bff63",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.39",
+    "library_versions": {
+      "python": "3.13.15",
+      "numpy": "2.1.3",
+      "torch": "2.11.0+cu128",
+      "torch_geometric": "2.7.0",
+      "stim": "1.16.0",
+      "pymatching": "2.4.0"
+    },
+    "scipy_available_for_mcnemar": true
+  },
+  "arms": {
+    "A": {
+      "arm": "A",
+      "test_ler_mean": 0.0596,
+      "test_ler_std": 0.0,
+      "n_seeds": 1,
+      "selected_per_seed": [
+        {
+          "seed": 1,
+          "selected_lambda": 0.0,
+          "val_ler": 0.06493333333333333,
+          "test_ler": 0.0596
+        }
+      ],
+      "lambda_grid": [
+        {
+          "seed": 1,
+          "lambda": 0.0,
+          "val_ler": 0.06493333333333333,
+          "test_ler": 0.0596
+        }
+      ]
+    },
+    "Raw": {
+      "arm": "Raw",
+      "test_ler_mean": 0.05413333333333333,
+      "test_ler_std": 0.0,
+      "n_seeds": 1,
+      "selected_per_seed": [
+        {
+          "seed": 1,
+          "selected_lambda": 0.1,
+          "val_ler": 0.059333333333333335,
+          "test_ler": 0.05413333333333333
+        }
+      ],
+      "lambda_grid": [
+        {
+          "seed": 1,
+          "lambda": 0.01,
+          "val_ler": 0.06373333333333334,
+          "test_ler": 0.057866666666666663
+        },
+        {
+          "seed": 1,
+          "lambda": 0.1,
+          "val_ler": 0.059333333333333335,
+          "test_ler": 0.05413333333333333
+        },
+        {
+          "seed": 1,
+          "lambda": 0.5,
+          "val_ler": 0.0632,
+          "test_ler": 0.05826666666666667
+        }
+      ]
+    },
+    "ZX": {
+      "arm": "ZX",
+      "test_ler_mean": 0.059333333333333335,
+      "test_ler_std": 0.0,
+      "n_seeds": 1,
+      "selected_per_seed": [
+        {
+          "seed": 1,
+          "selected_lambda": 0.5,
+          "val_ler": 0.06573333333333334,
+          "test_ler": 0.059333333333333335
+        }
+      ],
+      "lambda_grid": [
+        {
+          "seed": 1,
+          "lambda": 0.01,
+          "val_ler": 0.0688,
+          "test_ler": 0.0632
+        },
+        {
+          "seed": 1,
+          "lambda": 0.1,
+          "val_ler": 0.06613333333333334,
+          "test_ler": 0.06093333333333333
+        },
+        {
+          "seed": 1,
+          "lambda": 0.5,
+          "val_ler": 0.06573333333333334,
+          "test_ler": 0.059333333333333335
+        }
+      ]
+    }
+  },
+  "mcnemar_zx_vs_raw": {
+    "1": {
+      "discordant_a_right_b_wrong": 56,
+      "discordant_a_wrong_b_right": 95,
+      "n_discordant": 151,
+      "p_value": 0.0018877311602805867,
+      "method": "exact_binomial"
+    },
+    "_primary_seed": "1"
+  }
+}
