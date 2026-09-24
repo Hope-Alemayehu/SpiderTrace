@@ -302,6 +302,15 @@ def provenance(config):
         except Exception:
             return None
     dirty = git("status", "--porcelain")
+    commit = git("rev-parse", "HEAD")
+    # git("...") returns None when git could not be run at all, and "" when the
+    # tree is genuinely clean. Distinguish them: an unreachable git must NOT be
+    # recorded as a clean tree.
+    git_available = commit is not None and dirty is not None
+    if not git_available:
+        print("WARNING: git could not be reached from this process. This run's "
+              "provenance CANNOT record the commit or whether the tree was dirty "
+              "(both recorded as null). Do not trust this file for reproducibility.")
     versions = {"python": sys.version.split()[0], "numpy": np.__version__}
     for mod in ("torch", "torch_geometric", "stim", "pymatching"):
         try:
@@ -310,9 +319,10 @@ def provenance(config):
             versions[mod] = None
     return {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "git_commit": git("rev-parse", "HEAD"),
-        "git_dirty": bool(dirty),
-        "git_dirty_files": dirty.splitlines() if dirty else [],
+        "git_available": git_available,
+        "git_commit": commit,
+        "git_dirty": bool(dirty) if git_available else None,
+        "git_dirty_files": (dirty.splitlines() if dirty else []) if git_available else None,
         "argv": sys.argv,
         "config": config,
         "hostname": socket.gethostname(),
@@ -374,6 +384,25 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device)
     }
     return summary, test_correct, test_truth
 
+def mwpm_on_test(d, p, test_ds):
+    """Decode the shared test split with MWPM. Deterministic, so computed once per run."""
+    import pymatching
+    from qec_zx_dataset import build_circuit
+
+    circ = build_circuit(d, p)
+    dem = circ.detector_error_model(decompose_errors=True)
+    matching = pymatching.Matching.from_detector_error_model(dem)
+
+    # Nodes 0..num_detectors-1 are detectors, the last node is the boundary.
+    # Column 0 of x is the 'fired' bit, so this rebuilds each shot's syndrome.
+    dets = np.stack([g.x[:-1, 0].numpy() for g in test_ds]).astype(np.uint8)
+    assert dets.shape[1] == circ.num_detectors, "syndrome length mismatch"
+    y_true = np.array([int(g.y.item()) for g in test_ds])
+
+    pred = matching.decode_batch(dets)[:, 0].astype(int)
+    ler = float(np.mean(pred != y_true))
+    return ler, (pred == y_true), y_true
+
 
 def main():
     ap = argparse.ArgumentParser(description="Fair, provenance-recording GNN decoder runner (Option A).")
@@ -412,7 +441,15 @@ def main():
             raise RuntimeError(
                 f"Test sets differ between ZX and Raw at seed {seed}. "
                 "The split is not independent of model seed -- McNemar would be invalid.")
-
+    
+    # MWPM on the SAME test shots as the GNNs. No training, no seeds: computed once.
+    _, _, test_ds = make_datasets(args.d, args.p, args.shots, args.split_seed)
+    mwpm_ler, mwpm_correct, mwpm_truth = mwpm_on_test(args.d, args.p, test_ds)
+    if not np.array_equal(mwpm_truth, truths["ZX"][args.seeds[0]]):
+        raise RuntimeError("MWPM saw a different test set than the GNNs.")
+    results["mwpm"] = {"test_ler": mwpm_ler, "n_test": len(test_ds)}
+    print(f"[MWPM] test LER = {mwpm_ler:.4f} on the same {len(test_ds)} test shots")
+    
     # McNemar per seed on the shared test set (primary = first seed).
     for seed in args.seeds:
         results["mcnemar_zx_vs_raw"][str(seed)] = mcnemar(
@@ -421,6 +458,15 @@ def main():
     results["mcnemar_zx_vs_raw"]["_primary_seed"] = primary
     print(f"[McNemar ZX vs Raw, seed {primary}] "
           f"p = {results['mcnemar_zx_vs_raw'][primary]['p_value']:.4g}")
+
+    # McNemar ZX vs MWPM on the same test shots (a = ZX, b = MWPM).
+    results["mcnemar_zx_vs_mwpm"] = {}
+    for seed in args.seeds:
+        results["mcnemar_zx_vs_mwpm"][str(seed)] = mcnemar(
+            correctness["ZX"][seed], mwpm_correct)
+    results["mcnemar_zx_vs_mwpm"]["_primary_seed"] = primary
+    print(f"[McNemar ZX vs MWPM, seed {primary}] "
+          f"p = {results['mcnemar_zx_vs_mwpm'][primary]['p_value']:.4g}")
 
     # Write ONE timestamped, provenance-carrying artifact. Never overwrites.
     outdir = Path(args.outdir)
