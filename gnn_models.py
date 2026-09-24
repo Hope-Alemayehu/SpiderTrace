@@ -12,12 +12,14 @@ the data pipeline in ``qec_zx_dataset.py``.
 The aux head exists only at training time; it is discarded at inference, so all
 three models use the SAME forward path (syndrome graph -> flip logit) at eval.
 
-Inputs (batched torch_geometric.data.Batch from qec_zx_dataset.to_pyg_list):
-    x          (num_nodes, 4)            detector coords [x, y, t, is_virtual]
+Inputs (batched torch_geometric.data.Batch from qec_zx_dataset.to_pyg_list).
+Each graph is the fixed DEM-derived decoding graph (one node per detector plus
+one boundary node); only the ``fired`` node feature varies per shot:
+    x          (num_nodes, 5)            [fired, x, y, t, is_boundary]
     edge_index (2, num_edges)
-    edge_attr  (num_edges, 4)            [dx, dy, dt, |d|]
+    edge_attr  (num_edges, 6)            [w_norm, dx, dy, dt, is_boundary_edge, flips_obs]
     batch      (num_nodes,)              graph assignment
-    y          (batch_size,) or (B, 1)   logical flip label
+    y          (B,)                      logical flip label (long, (1,) per graph)
     raw_target (B, num_qubits, 4)        one-hot Pauli {I,X,Y,Z}
     zx_target  (B, num_qubits, 4)        one-hot Pauli {I,X,Y,Z}
 
@@ -87,7 +89,7 @@ class GNNBackbone(nn.Module):
                 nn.ReLU(),
                 nn.Linear(hidden, hidden),
             )
-            # edge_dim projects the 4-dim edge features to `hidden` internally.
+            # edge_dim projects the EDGE_IN_DIM-dim edge features to `hidden` internally.
             self.convs.append(GINEConv(mlp, train_eps=True, edge_dim=EDGE_IN_DIM))
 
     def forward(self, x, edge_index, edge_attr, batch) -> torch.Tensor:
