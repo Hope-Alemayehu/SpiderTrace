@@ -156,6 +156,17 @@ def build_model(kind, d, **hparams):
     return MODEL_REGISTRY[kind](_num_qubits_for(d), **hparams)
 
 
+def _seed_all(seed):
+    """Seed every RNG that affects a run: torch (weight init, loader shuffling),
+    numpy, and CUDA. Called by run_arm BEFORE the model is built and again at the
+    start of train()."""
+    import torch
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device):
     """Train one model with early stopping on the VALIDATION split.
 
@@ -177,10 +188,7 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device):
     from torch_geometric.loader import DataLoader   # confirmed: gnn_models.py:44
     from gnn_models import train_model
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    _seed_all(seed)
 
     # train_model does `device = next(model.parameters()).device` -- move first.
     model = model.to(device)
@@ -351,6 +359,12 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device)
 
         best = None  # (val_ler, lambda, test_ler, correct_mask, y_true)
         for lam in arm_lambdas:
+            # Seed BEFORE building the model so `seed` controls the initial
+            # weights too. Previously the model was constructed from whatever
+            # RNG state the process happened to be in, so initial weights were
+            # not reproducible from (seed, config). train() seeds again at its
+            # start, so the RNG state entering the data loaders is unchanged.
+            _seed_all(seed)
             model = build_model(kind, d=d)
             model = train(model, train_ds, val_ds, lambda_aux=lam,
                           epochs=epochs, seed=seed, device=device)
