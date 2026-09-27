@@ -75,6 +75,122 @@ def _num_qubits_for(d):
     return _NUM_QUBITS_CACHE[d]
 
 
+_DATA_QUBITS_CACHE = {}
+
+# Which dataset field each aux arm regresses. Mirrors gnn_models' aux_key.
+AUX_KEY = {"Raw": "raw_target", "ZX": "zx_target"}
+
+
+def _data_qubits_for(d):
+    """Indices of the DATA qubits (the ones the final destructive M reads out).
+
+    The aux target carries one slot per qubit index in the circuit, but most of
+    those slots are dead: ancilla slots are ~99% identity (resets wipe them) and
+    some indices are never used at all (26 slots at d=3 for 9 data + 8 real
+    ancilla qubits). Restricting the aux head to data qubits removes the dead
+    slots. Checked against the code distance: a rotated surface code of distance
+    d has exactly d*d data qubits.
+    """
+    if d not in _DATA_QUBITS_CACHE:
+        from qec_zx_dataset import build_circuit, _data_qubits
+        circ = build_circuit(d, 0.001)
+        dq = sorted(_data_qubits(circ))
+        assert len(dq) == d * d, (
+            f"expected {d*d} data qubits at d={d}, found {len(dq)}: {dq}")
+        assert dq and dq[-1] < circ.num_qubits, "data qubit index out of range"
+        _DATA_QUBITS_CACHE[d] = dq
+    return _DATA_QUBITS_CACHE[d]
+
+
+def compute_aux_class_weights(train_ds, aux_key, num_qubits, qubit_idx=None,
+                              scheme="inv-freq"):
+    """Per-Pauli (I,X,Y,Z) weights for the aux cross-entropy.
+
+    Computed from the TRAINING split ONLY -- never val or test -- so no
+    information leaks into selection or reporting.
+
+    scheme "inv-freq": weight_c proportional to 1 / frequency_c, normalised so
+    that sum_c freq_c * weight_c == 1. That normalisation keeps the EXPECTED
+    aux loss at roughly the same scale as the unweighted version, so the same
+    lambda grid keeps meaning roughly the same thing.
+
+    Returns (weights, frequencies) as plain lists of 4 floats.
+    """
+    if scheme != "inv-freq":
+        raise ValueError(f"unknown aux class-weight scheme {scheme!r}")
+    counts = np.zeros(4, dtype=np.int64)
+    for g in train_ds:
+        idx = getattr(g, aux_key).view(-1, 4).argmax(dim=-1).numpy()
+        if qubit_idx is not None:
+            idx = idx[qubit_idx]
+        counts += np.bincount(idx, minlength=4)
+    total = int(counts.sum())
+    freq = counts / max(total, 1)
+    # A class absent from the training split is treated as if it occurred once,
+    # so its weight stays finite instead of blowing up to infinity.
+    freq_eff = np.maximum(freq, 1.0 / max(total, 1))
+    w = 1.0 / freq_eff
+    norm = float((freq * w).sum())
+    if norm > 0:
+        w = w / norm
+    return [float(x) for x in w], [float(x) for x in freq]
+
+
+def aux_diagnostics(model, dataset, device, num_qubits):
+    """Is the aux head alive, or has it collapsed to predicting identity?
+
+    Reported on the TEST split for the selected lambda. Reporting only -- never
+    used for lambda selection or early stopping. Returns None for GNN-A, which
+    has no aux head (as opposed to a collapsed one).
+    """
+    import torch
+    from torch_geometric.loader import DataLoader
+
+    if not getattr(model, "has_aux", False):
+        return None
+
+    model = model.to(device)
+    model.eval()
+    qubit_idx = getattr(model, "aux_index", None)
+    conf = np.zeros((4, 4), dtype=np.int64)     # rows = true, cols = predicted
+    loader = DataLoader(dataset, batch_size=hparam_batch_size(), shuffle=False)
+    with torch.no_grad():
+        for batch in loader:
+            batch = batch.to(device)
+            _, aux_logits = model(batch)
+            B = aux_logits.size(0)
+            true = getattr(batch, model.aux_key).view(B, num_qubits, 4).argmax(-1)
+            if qubit_idx is not None:
+                true = true.index_select(1, qubit_idx)
+            pred = aux_logits.argmax(-1)
+            t = true.reshape(-1).cpu().numpy()
+            p = pred.reshape(-1).cpu().numpy()
+            np.add.at(conf, (t, p), 1)
+
+    total = int(conf.sum())
+    correct = int(np.trace(conf))
+    ident_total = int(conf[0, :].sum())
+    nonid_total = total - ident_total
+    nonid_correct = int(np.trace(conf)) - int(conf[0, 0])
+    pred_ident = int(conf[:, 0].sum())
+    recall = [float(conf[c, c] / conf[c, :].sum()) if conf[c, :].sum() else None
+              for c in range(4)]
+    frac_pred_identity = pred_ident / total if total else 0.0
+    return {
+        "aux_slots": int(getattr(model, "aux_slots", num_qubits)),
+        "n_entries": total,
+        "target_nonidentity_density": (nonid_total / total) if total else 0.0,
+        "aux_acc_overall": (correct / total) if total else 0.0,
+        "aux_acc_identity": (int(conf[0, 0]) / ident_total) if ident_total else 0.0,
+        "aux_acc_nonidentity": (nonid_correct / nonid_total) if nonid_total else 0.0,
+        "frac_pred_identity": frac_pred_identity,
+        "per_class_recall": {"I": recall[0], "X": recall[1],
+                             "Y": recall[2], "Z": recall[3]},
+        "confusion_true_by_pred": conf.tolist(),
+        "collapsed_to_identity": bool(frac_pred_identity > 0.999),
+    }
+
+
 def _model_type(model):
     """Map a model instance back to its arm key, for train_model's config dict."""
     if not getattr(model, "has_aux", False):
@@ -141,7 +257,7 @@ def make_datasets(d, p, shots, split_seed, val_frac=0.15, test_frac=0.15):
     return out
 
 
-def build_model(kind, d, **hparams):
+def build_model(kind, d, aux_qubits=None, **hparams):
     """Instantiate one arm. kind in {"A", "Raw", "ZX"}.
 
     CONTRACT: a fresh, untrained model. GNN-A has no aux head; Raw/ZX share a class
@@ -153,6 +269,10 @@ def build_model(kind, d, **hparams):
     from gnn_models import MODEL_REGISTRY
     if kind not in MODEL_REGISTRY:
         raise ValueError(f"unknown arm {kind!r}")
+    # GNN-A has no aux head, so it never takes aux_qubits: it is bit-identical
+    # whether or not the aux flags are set.
+    if aux_qubits is not None and kind != "A":
+        hparams["aux_qubits"] = aux_qubits
     return MODEL_REGISTRY[kind](_num_qubits_for(d), **hparams)
 
 
@@ -167,7 +287,8 @@ def _seed_all(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device):
+def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
+          aux_class_weight=None):
     """Train one model with early stopping on the VALIDATION split.
 
     CONTRACT:
@@ -203,6 +324,8 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device):
         "pos_weight": None,         # -> 1.0, the plain-BCE / LER-optimal choice
         "model_type": _model_type(model),   # required: used in train_model's logging
         "balanced_sampler": False,  # logging only; we shuffle at the natural prior
+        # None -> unweighted aux CE, i.e. the original behaviour.
+        "aux_class_weight": aux_class_weight,
     }
     history, best_state = train_model(model, train_loader, val_loader, config)
     model.load_state_dict(best_state)
@@ -340,11 +463,16 @@ def provenance(config):
     }
 
 
-def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device):
+def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
+            aux_data_qubits_only=False, aux_class_weight="none"):
     """Run one arm across all seeds, sweeping lambda per seed (Option A) and
     selecting best-by-validation. Returns the full grid plus the selected-lambda
     test results, and keeps the per-example correctness mask on the shared test set
-    for McNemar (keyed by model_seed)."""
+    for McNemar (keyed by model_seed).
+
+    aux_data_qubits_only / aux_class_weight apply IDENTICALLY to Raw and ZX (only
+    their target field differs) and are no-ops for GNN-A, which has no aux head.
+    Their defaults reproduce the original behaviour exactly."""
     # GNN-A has no aux head: its lambda grid is a single no-op point.
     arm_lambdas = [0.0] if kind == "A" else list(lambdas)
 
@@ -353,11 +481,28 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device)
     test_correct = {}    # seed -> boolean per-example correctness on shared test set
     test_truth = {}      # seed -> y_true on shared test set (sanity: identical across arms)
 
+    num_qubits = _num_qubits_for(d)
+    aux_qubits = _data_qubits_for(d) if aux_data_qubits_only else None
+
+    # Class weights come from the TRAINING split only. The split is fixed by
+    # split_seed, so they are identical across seeds -> compute once per arm.
+    # Each arm weights its OWN target's class frequencies: same rule, applied to
+    # each arm's own data, which is the fairness that matters here.
+    aux_weights = aux_freq = None
+    if kind != "A" and aux_class_weight != "none":
+        train_ds0, _, _ = make_datasets(d, p, shots, split_seed)
+        aux_weights, aux_freq = compute_aux_class_weights(
+            train_ds0, AUX_KEY[kind], num_qubits, aux_qubits,
+            scheme=aux_class_weight)
+        print(f"[{kind}] aux class freq (I,X,Y,Z) = "
+              f"{[round(f, 4) for f in aux_freq]} -> weights "
+              f"{[round(w, 3) for w in aux_weights]}")
+
     for seed in model_seeds:
         # Split is fixed by split_seed, so the test set is identical across arms & seeds.
         train_ds, val_ds, test_ds = make_datasets(d, p, shots, split_seed)
 
-        best = None  # (val_ler, lambda, test_ler, correct_mask, y_true)
+        best = None  # (val_ler, lambda, test_ler, correct_mask, y_true, aux)
         for lam in arm_lambdas:
             # Seed BEFORE building the model so `seed` controls the initial
             # weights too. Previously the model was constructed from whatever
@@ -365,9 +510,10 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device)
             # not reproducible from (seed, config). train() seeds again at its
             # start, so the RNG state entering the data loaders is unchanged.
             _seed_all(seed)
-            model = build_model(kind, d=d)
+            model = build_model(kind, d=d, aux_qubits=aux_qubits)
             model = train(model, train_ds, val_ds, lambda_aux=lam,
-                          epochs=epochs, seed=seed, device=device)
+                          epochs=epochs, seed=seed, device=device,
+                          aux_class_weight=aux_weights)
 
             # Selection metric: LER on VAL. Reported metric: LER on TEST.
             vp, vt = predict_flips(model, val_ds, device)
@@ -379,11 +525,15 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device)
                          "val_ler": val_ler, "test_ler": test_ler})
 
             if best is None or val_ler < best[0]:
-                best = (val_ler, lam, test_ler, (tp == tt), tt)
+                # Aux diagnostics on TEST for this lambda: reporting only, never
+                # used for selection (selection above is val LER).
+                aux = aux_diagnostics(model, test_ds, device, num_qubits)
+                best = (val_ler, lam, test_ler, (tp == tt), tt, aux)
 
-        val_ler, lam, test_ler, correct_mask, y_true = best
+        val_ler, lam, test_ler, correct_mask, y_true, aux = best
         selected.append({"seed": seed, "selected_lambda": lam,
-                         "val_ler": val_ler, "test_ler": test_ler})
+                         "val_ler": val_ler, "test_ler": test_ler,
+                         "aux": aux})
         test_correct[seed] = correct_mask
         test_truth[seed] = y_true
 
@@ -395,6 +545,11 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device)
         "n_seeds": len(test_lers),
         "selected_per_seed": selected,
         "lambda_grid": grid,
+        # aux configuration actually used by this arm (None for GNN-A)
+        "aux_slots": (len(aux_qubits) if aux_qubits is not None else num_qubits)
+                     if kind != "A" else None,
+        "aux_class_weights": aux_weights,
+        "aux_class_freq_train": aux_freq,
     }
     return summary, test_correct, test_truth
 
@@ -430,6 +585,17 @@ def main():
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--outdir", default="results")
+    # ---- aux-head options. Defaults reproduce the ORIGINAL behaviour exactly. ----
+    ap.add_argument("--aux-data-qubits-only", action="store_true",
+                    help="restrict the aux head to DATA qubits (d*d slots) instead "
+                         "of every qubit index. Applies to Raw and ZX identically; "
+                         "no-op for GNN-A. Default: off (all slots, as before).")
+    ap.add_argument("--aux-class-weight", choices=["none", "inv-freq"],
+                    default="none",
+                    help="per-Pauli weighting of the aux cross-entropy, computed "
+                         "from the TRAINING split only. 'inv-freq' stops the head "
+                         "collapsing to predicting identity everywhere. "
+                         "Default: none (unweighted, as before).")
     args = ap.parse_args()
 
     config = vars(args).copy()
@@ -442,12 +608,20 @@ def main():
     for kind in ("A", "Raw", "ZX"):
         summary, test_correct, test_truth = run_arm(
             kind, args.d, args.p, args.shots, args.split_seed,
-            args.seeds, args.lambdas, args.epochs, args.device)
+            args.seeds, args.lambdas, args.epochs, args.device,
+            aux_data_qubits_only=args.aux_data_qubits_only,
+            aux_class_weight=args.aux_class_weight)
         results["arms"][kind] = summary
         correctness[kind] = test_correct
         truths[kind] = test_truth
         print(f"[{kind}] test LER = {summary['test_ler_mean']:.4f} "
               f"+/- {summary['test_ler_std']:.4f} over {summary['n_seeds']} seeds")
+        aux0 = summary["selected_per_seed"][0].get("aux")
+        if aux0 is not None:
+            print(f"[{kind}] aux head: non-identity acc = "
+                  f"{aux0['aux_acc_nonidentity']:.4f}  predicts 'I' for "
+                  f"{aux0['frac_pred_identity']:.3f} of {aux0['aux_slots']} slots"
+                  f"  -> {'COLLAPSED' if aux0['collapsed_to_identity'] else 'alive'}")
 
     # Sanity: Raw and ZX must have seen the identical test set for McNemar to be valid.
     for seed in args.seeds:

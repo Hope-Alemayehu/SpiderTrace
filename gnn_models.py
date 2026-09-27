@@ -128,22 +128,37 @@ class GNN_A(nn.Module):
 
 
 class _GNNWithAux(nn.Module):
-    """Backbone + flip head + per-qubit Pauli auxiliary head."""
+    """Backbone + flip head + per-qubit Pauli auxiliary head.
+
+    ``aux_qubits`` optionally restricts the aux head to a SUBSET of qubit slots
+    (e.g. data qubits only). When it is None the head covers all ``num_qubits``
+    slots, which is the original behaviour. The targets in the dataset always
+    carry all ``num_qubits`` slots; the subset is selected inside _aux_loss, so
+    the data pipeline does not need to know about this.
+    """
 
     has_aux = True
     aux_key = ""    # "raw_target" or "zx_target"
 
-    def __init__(self, num_qubits: int, dropout: float = 0.1):
+    def __init__(self, num_qubits: int, dropout: float = 0.1,
+                 aux_qubits: Optional[List[int]] = None):
         super().__init__()
         self.num_qubits = num_qubits
         self.backbone = GNNBackbone(dropout=dropout)
         self.flip_head = nn.Linear(READOUT_DIM, 1)
-        self.aux_head = nn.Linear(READOUT_DIM, num_qubits * NUM_PAULI)
+        if aux_qubits is None:
+            self.aux_slots = num_qubits
+        else:
+            self.aux_slots = len(aux_qubits)
+            # buffer so it follows the model across .to(device) and state_dict
+            self.register_buffer(
+                "aux_index", torch.as_tensor(list(aux_qubits), dtype=torch.long))
+        self.aux_head = nn.Linear(READOUT_DIM, self.aux_slots * NUM_PAULI)
 
     def forward(self, data):
         g = self.backbone(data.x, data.edge_index, data.edge_attr, data.batch)
         flip_logit = self.flip_head(g).view(-1)
-        aux_logits = self.aux_head(g).view(-1, self.num_qubits, NUM_PAULI)
+        aux_logits = self.aux_head(g).view(-1, self.aux_slots, NUM_PAULI)
         return flip_logit, aux_logits
 
 
@@ -162,26 +177,44 @@ MODEL_REGISTRY = {"A": GNN_A, "Raw": GNN_Raw, "ZX": GNN_ZX}
 # Loss
 # --------------------------------------------------------------------------- #
 def _aux_loss(aux_logits: torch.Tensor, target_onehot: torch.Tensor,
-              num_qubits: int) -> torch.Tensor:
-    """(1 / num_qubits) * sum_q CrossEntropy(qubit q), averaged over the batch.
+              num_qubits: int, weight: Optional[torch.Tensor] = None,
+              qubit_idx: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """(1 / num_slots) * sum_q CrossEntropy(slot q), averaged over the batch.
 
-    Equivalent to the mean per-qubit CE; the lambda scaling is applied by the
+    Equivalent to the mean per-slot CE; the lambda scaling is applied by the
     caller. target_onehot is (B, num_qubits, 4) one-hot -> argmax to class idx.
+
+    ``qubit_idx`` optionally selects a subset of qubit slots (data qubits only);
+    the target always arrives with all num_qubits slots. ``weight`` is an
+    optional per-class (I,X,Y,Z) weight vector: with the targets ~96% identity,
+    unweighted CE is minimised by predicting "I" everywhere, so a weight vector
+    is what makes the rare classes worth learning. Both default to None, which
+    reproduces the original unweighted, all-slots loss exactly.
     """
     B = aux_logits.size(0)
     target_idx = target_onehot.view(B, num_qubits, NUM_PAULI).argmax(dim=-1)  # (B,Nq)
-    # reduction='mean' over B*num_qubits == (1/B) * (1/num_qubits) * sum_b sum_q CE
-    return F.cross_entropy(aux_logits.reshape(-1, NUM_PAULI), target_idx.reshape(-1))
+    if qubit_idx is not None:
+        target_idx = target_idx.index_select(1, qubit_idx)
+    assert aux_logits.size(1) == target_idx.size(1), (
+        f"aux head has {aux_logits.size(1)} slots but the target has "
+        f"{target_idx.size(1)}; aux_qubits and the target subset disagree.")
+    # reduction='mean' over B*num_slots == (1/B) * (1/num_slots) * sum_b sum_q CE
+    return F.cross_entropy(aux_logits.reshape(-1, NUM_PAULI),
+                           target_idx.reshape(-1), weight=weight)
 
 
 def compute_loss(model, data, bce: nn.BCEWithLogitsLoss,
-                 lambda_aux: float) -> torch.Tensor:
+                 lambda_aux: float,
+                 aux_class_weight: Optional[torch.Tensor] = None) -> torch.Tensor:
     y = data.y.view(-1).float()
     flip_logit, aux_logits = model(data)
     loss = bce(flip_logit, y)
     if model.has_aux and lambda_aux > 0:
         target = getattr(data, model.aux_key)
-        loss = loss + lambda_aux * _aux_loss(aux_logits, target, model.num_qubits)
+        loss = loss + lambda_aux * _aux_loss(
+            aux_logits, target, model.num_qubits,
+            weight=aux_class_weight,
+            qubit_idx=getattr(model, "aux_index", None))
     return loss
 
 
@@ -225,7 +258,9 @@ def evaluate(model, loader, model_type: str) -> Dict[str, float]:
 def train_model(model, train_loader, val_loader, config: Dict):
     """Adam lr=1e-3, early stopping (patience 10) on val loss.
 
-    config: epochs, lambda_aux, pos_weight (None -> 1.0), model_type.
+    config: epochs, lambda_aux, pos_weight (None -> 1.0), model_type, and
+    optionally aux_class_weight (a length-4 per-Pauli weight vector for the aux
+    cross-entropy; None -> unweighted, the original behaviour).
     Returns (history, best_state_dict).
 
     NOTE: pos_weight defaults to 1.0 (plain BCE). The logical error rate weighs
@@ -248,6 +283,14 @@ def train_model(model, train_loader, val_loader, config: Dict):
     print(f"  [{config['model_type']:>3}] pos_weight in use = {float(pos_weight)}  "
           f"| balanced sampler = {config.get('balanced_sampler', True)}")
 
+    aux_class_weight = config.get("aux_class_weight")
+    if aux_class_weight is not None:
+        aux_class_weight = torch.as_tensor(aux_class_weight, dtype=torch.float32,
+                                           device=device)
+        print(f"  [{config['model_type']:>3}] aux class weights (I,X,Y,Z) = "
+              f"{[round(float(v), 3) for v in aux_class_weight]}"
+              f" | aux slots = {getattr(model, 'aux_slots', 'n/a')}")
+
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     history = {"train_loss": [], "val_loss": [], "val_recall": [],
@@ -263,7 +306,7 @@ def train_model(model, train_loader, val_loader, config: Dict):
         for data in train_loader:
             data = data.to(device)
             opt.zero_grad()
-            loss = compute_loss(model, data, bce, lambda_aux)
+            loss = compute_loss(model, data, bce, lambda_aux, aux_class_weight)
             loss.backward()
             opt.step()
             running += loss.item(); nb += 1
@@ -275,7 +318,8 @@ def train_model(model, train_loader, val_loader, config: Dict):
         with torch.no_grad():
             for data in val_loader:
                 data = data.to(device)
-                vrun += compute_loss(model, data, bce, lambda_aux).item(); vnb += 1
+                vrun += compute_loss(model, data, bce, lambda_aux,
+                                     aux_class_weight).item(); vnb += 1
         val_loss = vrun / max(vnb, 1)
 
         m = evaluate(model, val_loader, config["model_type"])

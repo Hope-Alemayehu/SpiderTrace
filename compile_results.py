@@ -7,13 +7,17 @@ groups = defaultdict(list)
 for path in sorted(glob.glob("results/run_*.json")):
     data = json.load(open(path))
     c = data["provenance"]["config"]
-    key = (c["d"], c["p"], c["shots"], c["epochs"], tuple(c["lambdas"]))
+    # .get defaults match the pre-flag behaviour, so runs predating the aux flags
+    # still group exactly as they did before.
+    key = (c["d"], c["p"], c["shots"], c["epochs"], tuple(c["lambdas"]),
+           c.get("aux_class_weight", "none"), c.get("aux_data_qubits_only", False))
     groups[key].append(data)
 
 # 2. For each group, combine seeds
-for (d, p, shots, epochs, lambdas), runs in groups.items():
+for (d, p, shots, epochs, lambdas, aux_w, aux_dq), runs in groups.items():
     print(f"\n=== d={d} p={p} shots={shots} epochs={epochs} "
-          f"lambdas={list(lambdas)} ({len(runs)} files) ===")
+          f"lambdas={list(lambdas)} aux_weight={aux_w} aux_data_only={aux_dq} "
+          f"({len(runs)} files) ===")
 
     for arm in ("A", "Raw", "ZX"):
         lers = [s["test_ler"] for data in runs
