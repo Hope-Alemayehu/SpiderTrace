@@ -7,6 +7,18 @@ The repository has two parts:
 1. **The `spidertrace` package**: a small Pauli-propagation engine plus ZX-diagram visualisation.
 2. **A research extension**: a neural QEC decoder study that uses Pauli propagation to build auxiliary training targets for a GNN decoder. See [Research Extension](#research-extension-neural-qec-decoder-with-zx-supervision).
 
+## Findings so far
+
+- **Using the DEM as the input graph helps a lot.** Using the detector error model (DEM) as the GNN's input graph, instead of a kNN graph, cut GNN-A's logical error rate (LER) from 0.18 to 0.012–0.016 at d=5, p=0.003. This comparison is not clean: the kNN run used the class-balanced sampler and the DEM runs used natural sampling, so part of the gain may come from the sampler.
+- **Auxiliary supervision from fault propagation adds nothing measurable.** Training targets built from fault locations (Raw) or propagated Pauli frames (ZX) gave no measurable gain:
+  - At d=5, every gap between arms (at most 0.0011) is smaller than GNN-A's 0.0017 spread across two runs of the same config.
+  - At d=3 (3 seeds), the gaps (at most 0.0022) are within about one standard error of the 7,500-shot test set.
+  - The paired McNemar tests of ZX vs Raw give p = 0.26–1.0.
+- **Per-qubit fault frames were not learned from the syndrome.** In the one run with aux diagnostics (d=5, data qubits only, inverse-frequency class weights), the aux head's precision on non-identity Paulis is only 3–10%. Two things contribute: many fault sets share a syndrome, and the class weights push the head to over-predict non-identity.
+- **The GNN falls well short of MWPM on the same graph.** It is about 2.5× worse than MWPM on the same d=5 test shots (0.012 vs 0.0048, McNemar p ≈ 1e-10), even though its input is the decomposed DEM that MWPM decodes on. That points to approximate inference or learning, not the noise model, as the source of the gap.
+
+These results raise the next question: how much of a decoder's excess error comes from an incorrect noise model, and how much from approximate inference? See the [experiment log](results/LOG.md).
+
 ---
 
 ## The `spidertrace` package
@@ -137,7 +149,7 @@ The aux head is used only in training. At inference, all three arms predict the 
 ### Running
 
 ```bash
-pip install stim pymatching torch torch_geometric scipy matplotlib   # tested: stim 1.16.0, pymatching 2.4.0, torch 2.12, PyG 2.7
+pip install stim pymatching torch torch_geometric scipy matplotlib   # tested: stim 1.16.0, pymatching 2.4.0, torch 2.10–2.11, PyG 2.7
 
 python qec_zx_dataset.py                         # pipeline smoke test + SpiderTrace adapter validation
 python gnn_models.py --dry-run                   # 20-epoch d=3 sanity check of all three arms
@@ -159,22 +171,31 @@ python validate_dem_graph.py                     # GNN-A on DEM graph, 4 vs 8 la
   - LER is reported on a held-out test split. That split is fixed by `--split-seed`, so it is identical across arms and seeds.
   - It runs a paired McNemar test (ZX vs Raw) on that test split.
   - It writes a timestamped JSON with provenance: git commit, dirty flag, config and library versions.
+  - It computes MWPM on the same test split and runs a paired McNemar test of ZX vs MWPM.
+  - `--aux-data-qubits-only` restricts the aux target to the d² data qubits. `--aux-class-weight inv-freq` weights the aux CE loss by inverse Pauli frequency. Both flags apply identically to Raw and ZX, and the run also records aux diagnostics: per-class recall and a confusion matrix.
 
 ### Current results
 
-For reference, MWPM under the same circuit-level noise at d=5, p=0.003 reaches **LER 0.0036**, from 50k shots ([mwpm_circuit_level.json](results/mwpm_circuit_level.json)). The observable flip rate is 0.159, so the trivial "never flip" decoder scores LER ≈ 0.159.
+For reference, MWPM under the same circuit-level noise at d=5, p=0.003 reaches **LER 0.0036**, from 50k shots ([mwpm_d7_p0.003.json](results/mwpm_d7_p0.003.json)). That file is the output of `evaluate_mwpm_circuit.py`, which writes `mwpm_circuit_level.json`; despite its name, it holds the full d ∈ {3,5,7} grid. The observable flip rate is 0.159, so the trivial "never flip" decoder scores LER ≈ 0.159.
 
 | File | Setup | GNN-A | GNN-Raw | GNN-ZX |
 |---|---|---|---|---|
 | [gnn_d5_p0.003.json](results/gnn_d5_p0.003.json) | d=5, p=0.003, 50k shots, 1 seed, 100 epochs, balanced sampler, **pre-DEM-graph (kNN) graph** | 0.1813 | 0.1428 (λ=0.01) | 0.1406 (λ=0.1) |
 | [gnn_d3_p0.01.json](results/gnn_d3_p0.01.json) | d=3, p=0.01, 10k shots, 1 seed, 30 epochs, pre-DEM-graph | 0.2400 | 0.2235 | 0.2430 |
 | [dem_graph_gnnA_d5_p0.003.json](results/dem_graph_gnnA_d5_p0.003.json) | d=5, p=0.003, 50k shots, DEM graph, natural sampling | 0.0157 (4 layers); 0.1505 (8 layers, collapsed to all-zero) | — | — |
+| `run_20260924T0{82552,90326,93727}Z_d3_p0.01.json` | `qec_run.py`, d=3, p=0.01, 50k shots, **3 seeds**, DEM graph, 7,500 test shots (MWPM 0.0545 on the same shots) | 0.0592 ± 0.0005 | 0.0570 ± 0.0025 | 0.0581 ± 0.0013 |
+| [run_20260924T131514Z_d5_p0.003.json](results/run_20260924T131514Z_d5_p0.003.json) | `qec_run.py`, d=5, p=0.003, 50k shots, 1 seed, DEM graph, 7,500 test shots (MWPM 0.0048 on the same shots) | 0.0115 | 0.0121 (λ=0.1) | 0.0121 (λ=0.1) |
+| [run_20260928T035724Z_d5_p0.003.json](results/run_20260928T035724Z_d5_p0.003.json) | As above, plus `--aux-data-qubits-only --aux-class-weight inv-freq` | 0.0132 | 0.0121 (λ=0.01) | 0.0127 (λ=0.1) |
 
 How to read these numbers:
 
 - **The pre-DEM-graph results are not competitive.** At d=5, the ordering is GNN-ZX < GNN-Raw < GNN-A. That is one seed, and the ZX–Raw gap is 0.002. All three are near or above the trivial baseline and about 40× worse than MWPM.
 - **The DEM graph improved GNN-A by an order of magnitude.** It reaches 0.0157, but that is still about 4× MWPM and misses the 0.012 target set in `validate_dem_graph.py`.
-- **Not yet run on the DEM graph**: GNN-Raw, GNN-ZX, a McNemar result and `qec_run.py`. No committed result supports a claim that ZX supervision helps.
+- **On the DEM graph with `qec_run.py`, the three arms are indistinguishable.**
+  - At d=5, GNN-A scored 0.0115 and 0.0132 in two runs whose settings for that arm were the same. That 0.0017 spread is larger than every arm-to-arm gap. The two runs are not perfectly controlled: the first predates commit 20758be, so its model init was unseeded, and they ran on different platforms (Colab vs Kaggle).
+  - ZX vs Raw McNemar p = 1.0 and 0.56 at d=5, and pooled p = 0.26 at d=3.
+  - All GNN arms are about 2.5× worse than MWPM on the same d=5 test shots, and slightly behind it at d=3.
+  - No committed result supports a claim that ZX supervision helps.
 - [gnn_d5_p0.003_bugged_posweight.json](results/gnn_d5_p0.003_bugged_posweight.json) is kept as a record of the class-weighted `pos_weight` bug, which made the models collapse.
 
 ### Earlier MLP baseline (legacy)
@@ -228,6 +249,8 @@ SpiderTrace/
 
 - `pyproject.toml` declares the console scripts `spidertrace-test` and `spidertrace-custom` pointing at `spidertrace.test_simple` / `spidertrace.test_custom`. Those modules live in `tests/`, so both scripts are broken.
 - `qec_zx_dataset.build_fault_tables` compiles its DEM sampler without a seed, and the `seed` argument of `sample_tuples` is unused. As a result, `gnn_models.build_loaders` does not produce reproducible datasets. `qec_run.py` works around this by compiling a seeded sampler itself.
+- Results in `qec_run.py` JSONs written before commit 20758be (all d=3 runs and `run_20260924T131514Z`) used unseeded model initialisation, so re-running them will not reproduce the exact numbers.
+- The kNN-vs-DEM-graph comparison is confounded by the sampler: balanced for kNN, natural for DEM.
 - Early stopping is on validation loss, which for Raw/ZX includes the `λ·aux` term. The stopping criterion therefore varies with λ.
 
 ## Acknowledgments
