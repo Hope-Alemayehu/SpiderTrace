@@ -1,11 +1,15 @@
 # SpiderTrace
 
-SpiderTrace traces how Pauli X, Y and Z errors propagate through Clifford circuits, and renders each propagation step as a ZX diagram (via PyZX).
+[![Unitary Foundation](https://img.shields.io/badge/Supported%20By-UNITARY%20FOUNDATION-brightgreen.svg?style=for-the-badge)](https://unitary.foundation)
+
+SpiderTrace is a research project on physics-informed training of neural decoders for quantum error correction. It asks a simple question: if a decoder is shown how errors propagate through the circuit during training, does it learn to decode better?
 
 The repository has two parts:
 
-1. **The `spidertrace` package**: a small Pauli-propagation engine plus ZX-diagram visualisation.
-2. **A research extension**: a neural QEC decoder study that uses Pauli propagation to build auxiliary training targets for a GNN decoder. See [Research Extension](#research-extension-neural-qec-decoder-with-zx-supervision).
+1. **The `spidertrace` package:** a small engine that traces how Pauli X, Y and Z errors propagate through Clifford circuits, and renders each step as a ZX diagram (via PyZX).
+2. **The decoder study:** a GNN decoder for the rotated surface code, trained with auxiliary targets built from Pauli propagation, and compared against syndrome-only and raw-error baselines on identical test shots. See [Research Extension](#research-extension-neural-qec-decoder-with-zx-supervision).
+
+The project is supported by the Unitary Foundation. Results and their current interpretation are logged in [`results/LOG.md`](results/LOG.md).
 
 ## Findings so far
 
