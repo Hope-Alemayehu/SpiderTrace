@@ -119,3 +119,15 @@
     - The head over-predicts X/Y/Z. That is what the heavy class weights reward when the per-qubit frame can't be identified from the syndrome.
     - ZX has higher precision than Raw on every Pauli, so its targets are slightly more learnable, but that doesn't improve LER.
   - **Overall:** this run agrees with Runs 2–3. Aux supervision gives no measurable LER gain, and all GNN arms are about 2.5× worse than MWPM on the same graph.
+
+### Run 4: salvaged from printed output (JSON lost)
+- **Status:** these numbers were copied from printed console output. Their JSON files were lost, so they are not file-backed. Do not pool them with file-backed results.
+- **Setup (all):** commit 44ce02d, d=5, p=0.003, `--aux-data-qubits-only --aux-class-weight inv-freq`
+- **Not captured:** selected λ for every arm and seed.
+- "Aux non-I acc" is the same quantity as "aux non-I recall" in the table above (`aux_acc_nonidentity`). "Pred-I" is the fraction of aux predictions that are I.
+
+| Platform, seed | GNN-A | GNN-Raw (aux non-I acc, pred-I) | GNN-ZX (aux non-I acc, pred-I) | MWPM | McNemar ZX vs Raw | McNemar ZX vs MWPM |
+|---|---|---|---|---|---|---|
+| Kaggle, seed 1 | 0.0123 | 0.0115 (0.5534, 0.440) | 0.0113 (0.6602, 0.643) | 0.0048 | p = 1.0 | p = 8.396e-09 |
+| Colab, seed 0 | 0.0131 | 0.0127 (0.7591, 0.681) | 0.0121 (0.6195, 0.600) | 0.0048 | p = 0.5572 | p = 3.808e-10 |
+| Colab, seed 1 (partial) | not captured | not captured | 0.0125 (0.4535, 0.519) | 0.0048 | p = 0.3915 | p = 7.864e-11 |
