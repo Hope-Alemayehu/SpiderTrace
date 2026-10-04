@@ -1,0 +1,83 @@
+@page {
+  size: A4;
+  margin: 14mm 15mm 14mm 15mm;
+  @bottom-right { content: counter(page) " / " counter(pages); font: 7.5pt "Segoe UI", sans-serif; color: #898781; }
+}
+:root {
+  --ink: #0b0b0b;
+  --ink2: #52514e;
+  --muted: #898781;
+  --rule: #c3c2b7;
+  --hair: #e1e0d9;
+  --wash: #f4f3ef;
+}
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  margin: 0;
+  background: #ffffff;
+  color: var(--ink);
+  font: 9.4pt/1.34 Cambria, Georgia, "Times New Roman", serif;
+  hyphens: auto;
+}
+h1 {
+  font: 600 15pt/1.2 "Segoe UI", sans-serif;
+  margin: 0 0 2pt;
+  letter-spacing: -0.01em;
+}
+.byline { font: 8.4pt/1.35 "Segoe UI", sans-serif; color: var(--ink2); margin: 0 0 8pt; }
+h2 {
+  font: 600 10.8pt/1.25 "Segoe UI", sans-serif;
+  margin: 9pt 0 3pt;
+  padding-top: 4pt;
+  border-top: 0.6pt solid var(--rule);
+}
+h3 { font: 600 9.4pt/1.25 "Segoe UI", sans-serif; margin: 6pt 0 2pt; }
+p { margin: 0 0 4pt; text-align: justify; }
+ul { margin: 0 0 4pt; padding-left: 13pt; }
+li { margin: 0 0 1.6pt; text-align: justify; }
+code { font: 8pt Consolas, "Courier New", monospace; white-space: nowrap; hyphens: none; }
+strong { font-weight: 700; }
+table {
+  border-collapse: collapse;
+  margin: 3pt 0 5pt;
+  font: 7.7pt/1.3 "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  break-inside: avoid;
+}
+th { font-weight: 600; text-align: left; color: var(--ink2); border-bottom: 0.8pt solid var(--rule); padding: 1.5pt 6pt 1.5pt 0; vertical-align: bottom; }
+td { border-bottom: 0.4pt solid var(--hair); padding: 1.3pt 6pt 1.3pt 0; vertical-align: top; }
+table.num td + td, table.num th + th { text-align: right; }
+table.num td { white-space: nowrap; }
+table.aux th + th { width: 56pt; }
+table.run4 td, table.run4 th { padding-right: 7pt; }
+table.aux th { max-width: 52pt; }
+.lam { color: var(--muted); }
+.tables-row { display: flex; gap: 14pt; align-items: flex-start; }
+.figrow { display: flex; gap: 10pt; margin: 4pt 0 6pt; break-inside: avoid; }
+.keep { break-inside: avoid; }
+figure { margin: 0; flex: 1 1 0; }
+figure img { width: 100%; display: block; }
+figcaption, .note { font: 7.6pt/1.3 "Segoe UI", sans-serif; color: var(--ink2); margin-top: 2pt; text-align: left; }
+.note { margin: -2pt 0 5pt; }
+.sources td:first-child { white-space: nowrap; }
+.sources td { font-size: 7.3pt; }
+.sources code { font-size: 7pt; }
+
+sup { font-size: 0.72em; line-height: 0; vertical-align: super; }
+.summary {
+  border: 0.7pt solid var(--rule);
+  background: var(--wash);
+  padding: 4pt 9pt 3pt;
+  margin: 0 0 6pt;
+  font: 8.6pt/1.32 "Segoe UI", sans-serif;
+  break-inside: avoid;
+}
+.summary ul { margin: 0; padding-left: 11pt; }
+.summary li { margin: 0 0 2pt; text-align: left; }
+.lessons { border-top: 0.6pt solid var(--rule); margin-top: 6pt; padding-top: 2pt; break-inside: avoid; }
+.lessons h3 { margin-top: 3pt; }
+.lessons ul { margin-bottom: 3pt; }
+.lessons li { margin-bottom: 0.8pt; }
+.salv { font-style: italic; }
+table.avsaux td:nth-child(2), table.avsaux th:nth-child(2),
+table.avsaux td:nth-child(3), table.avsaux th:nth-child(3) { text-align: left; }

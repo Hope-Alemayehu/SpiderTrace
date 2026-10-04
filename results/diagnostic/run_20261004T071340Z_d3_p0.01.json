@@ -1,0 +1,265 @@
+{
+  "provenance": {
+    "timestamp_utc": "2026-10-04T07:12:21.862848+00:00",
+    "git_available": true,
+    "git_commit": "7d0a835ccf1db7c2d45923206b77a36872b1c6ca",
+    "git_dirty": false,
+    "git_dirty_files": [],
+    "argv": [
+      "qec_run.py",
+      "--d",
+      "3",
+      "--p",
+      "0.01",
+      "--shots",
+      "4000",
+      "--seeds",
+      "0",
+      "--lambdas",
+      "0.1",
+      "--epochs",
+      "25",
+      "--device",
+      "cpu",
+      "--outdir",
+      "results/diagnostic",
+      "--aux-data-qubits-only",
+      "--aux-class-weight",
+      "inv-freq"
+    ],
+    "config": {
+      "d": 3,
+      "p": 0.01,
+      "shots": 4000,
+      "seeds": [
+        0
+      ],
+      "split_seed": 12345,
+      "lambdas": [
+        0.1
+      ],
+      "epochs": 25,
+      "device": "cpu",
+      "outdir": "results/diagnostic",
+      "aux_data_qubits_only": true,
+      "aux_class_weight": "inv-freq"
+    },
+    "hostname": "Hope",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "library_versions": {
+      "python": "3.12.10",
+      "numpy": "2.5.3",
+      "torch": "2.14.1+cpu",
+      "torch_geometric": "2.7.0",
+      "stim": "1.16.0",
+      "pymatching": "2.4.0"
+    },
+    "scipy_available_for_mcnemar": true
+  },
+  "arms": {
+    "A": {
+      "arm": "A",
+      "test_ler_mean": 0.14333333333333334,
+      "test_ler_std": 0.0,
+      "n_seeds": 1,
+      "selected_per_seed": [
+        {
+          "seed": 0,
+          "selected_lambda": 0.0,
+          "val_ler": 0.17166666666666666,
+          "test_ler": 0.14333333333333334,
+          "aux": null
+        }
+      ],
+      "lambda_grid": [
+        {
+          "seed": 0,
+          "lambda": 0.0,
+          "val_ler": 0.17166666666666666,
+          "test_ler": 0.14333333333333334
+        }
+      ],
+      "aux_slots": null,
+      "aux_class_weights": null,
+      "aux_class_freq_train": null
+    },
+    "Raw": {
+      "arm": "Raw",
+      "test_ler_mean": 0.14333333333333334,
+      "test_ler_std": 0.0,
+      "n_seeds": 1,
+      "selected_per_seed": [
+        {
+          "seed": 0,
+          "selected_lambda": 0.1,
+          "val_ler": 0.17166666666666666,
+          "test_ler": 0.14333333333333334,
+          "aux": {
+            "aux_slots": 9,
+            "n_entries": 5400,
+            "target_nonidentity_density": 0.095,
+            "aux_acc_overall": 0.29944444444444446,
+            "aux_acc_identity": 0.28811131573562515,
+            "aux_acc_nonidentity": 0.4074074074074074,
+            "frac_pred_identity": 0.2664814814814815,
+            "per_class_recall": {
+              "I": 0.28811131573562515,
+              "X": 0.23954372623574144,
+              "Y": 0.6336633663366337,
+              "Z": 0.5503355704697986
+            },
+            "confusion_true_by_pred": [
+              [
+                1408,
+                685,
+                1166,
+                1628
+              ],
+              [
+                23,
+                63,
+                97,
+                80
+              ],
+              [
+                1,
+                21,
+                64,
+                15
+              ],
+              [
+                7,
+                9,
+                51,
+                82
+              ]
+            ],
+            "collapsed_to_identity": false
+          }
+        }
+      ],
+      "lambda_grid": [
+        {
+          "seed": 0,
+          "lambda": 0.1,
+          "val_ler": 0.17166666666666666,
+          "test_ler": 0.14333333333333334
+        }
+      ],
+      "aux_slots": 9,
+      "aux_class_weights": [
+        0.2779370891604535,
+        4.960629921259843,
+        11.013986013986015,
+        9.117221418234443
+      ],
+      "aux_class_freq_train": [
+        0.8994841269841269,
+        0.0503968253968254,
+        0.022698412698412697,
+        0.027420634920634922
+      ]
+    },
+    "ZX": {
+      "arm": "ZX",
+      "test_ler_mean": 0.14333333333333334,
+      "test_ler_std": 0.0,
+      "n_seeds": 1,
+      "selected_per_seed": [
+        {
+          "seed": 0,
+          "selected_lambda": 0.1,
+          "val_ler": 0.17166666666666666,
+          "test_ler": 0.14333333333333334,
+          "aux": {
+            "aux_slots": 9,
+            "n_entries": 5400,
+            "target_nonidentity_density": 0.10518518518518519,
+            "aux_acc_overall": 0.43462962962962964,
+            "aux_acc_identity": 0.4370860927152318,
+            "aux_acc_nonidentity": 0.4137323943661972,
+            "frac_pred_identity": 0.4033333333333333,
+            "per_class_recall": {
+              "I": 0.4370860927152318,
+              "X": 0.41106719367588934,
+              "Y": 0.3394495412844037,
+              "Z": 0.4563106796116505
+            },
+            "confusion_true_by_pred": [
+              [
+                2112,
+                821,
+                641,
+                1258
+              ],
+              [
+                31,
+                104,
+                54,
+                64
+              ],
+              [
+                3,
+                43,
+                37,
+                26
+              ],
+              [
+                32,
+                38,
+                42,
+                94
+              ]
+            ],
+            "collapsed_to_identity": false
+          }
+        }
+      ],
+      "lambda_grid": [
+        {
+          "seed": 0,
+          "lambda": 0.1,
+          "val_ler": 0.17166666666666666,
+          "test_ler": 0.14333333333333334
+        }
+      ],
+      "aux_slots": 9,
+      "aux_class_weights": [
+        0.28130023218431865,
+        5.151267375306623,
+        10.75085324232082,
+        6.331658291457287
+      ],
+      "aux_class_freq_train": [
+        0.8887301587301587,
+        0.04853174603174603,
+        0.023253968253968253,
+        0.03948412698412698
+      ]
+    }
+  },
+  "mcnemar_zx_vs_raw": {
+    "0": {
+      "discordant_a_right_b_wrong": 0,
+      "discordant_a_wrong_b_right": 0,
+      "n_discordant": 0,
+      "p_value": 1.0,
+      "method": "exact_binomial"
+    },
+    "_primary_seed": "0"
+  },
+  "mwpm": {
+    "test_ler": 0.056666666666666664,
+    "n_test": 600
+  },
+  "mcnemar_zx_vs_mwpm": {
+    "0": {
+      "discordant_a_right_b_wrong": 16,
+      "discordant_a_wrong_b_right": 68,
+      "n_discordant": 84,
+      "p_value": 8.542340953724185e-09,
+      "method": "exact_binomial"
+    },
+    "_primary_seed": "0"
+  }
+}
