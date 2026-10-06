@@ -131,3 +131,28 @@
 | Kaggle, seed 1 | 0.0123 | 0.0115 (0.5534, 0.440) | 0.0113 (0.6602, 0.643) | 0.0048 | p = 1.0 | p = 8.396e-09 |
 | Colab, seed 0 | 0.0131 | 0.0127 (0.7591, 0.681) | 0.0121 (0.6195, 0.600) | 0.0048 | p = 0.5572 | p = 3.808e-10 |
 | Colab, seed 1 (partial) | not captured | not captured | 0.0125 (0.4535, 0.519) | 0.0048 | p = 0.3915 | p = 7.864e-11 |
+
+## 2026-10-06: ZX target consistency check (no training)
+- **Commit:** 0992fc7 (clean). `qec_zx_dataset.py` is unchanged since 10d3835.
+- **Check:** `tests/test_zx_target_consistency.py`. Run `python tests/test_zx_target_consistency.py` for the report below, or `pytest tests/test_zx_target_consistency.py`. Seeded DEM sampler (seed 12345), 5,000 shots per config.
+- **Rule:** a correctly propagated end-of-circuit frame must reproduce the logical label. In this memory-Z circuit the label is the parity of X or Y components of the final frame on the observable qubits. `raw_target` is not a propagated frame, so its match rate is a comparison only.
+
+| Config | ZX match | Raw match | Shots whose zx_target is wrong |
+|---|---|---|---|
+| d=3, p=0.003 | 0.9776 | 0.9958 | 0.0920 |
+| d=5, p=0.003 (Runs 3, 4) | 0.9514 | 0.9772 | 0.3448 |
+| d=3, p=0.01 (Runs 1, 2) | 0.9274 | 0.9818 | 0.2744 |
+
+- "Shots whose zx_target is wrong" counts shots whose stored target differs from the target built by injecting each fault exactly at its noise instruction. This includes differences the label check cannot see.
+- **DEM walk** (every DEM error's representative fault):
+  - d=3, p=0.003: 219 errors. 9 have label-inconsistent ZX frames (total probability 0.0233). 99 have frames that differ from exact-position injection (total probability 0.0975).
+  - d=5, p=0.003: 1,677 errors. 47 label-inconsistent (0.0511). 811 differ from exact-position injection (0.4404).
+  - Label-inconsistent at d=3 (index, probability, tick_offset, gate, fault): 9, 0.012277, 0, X_ERROR, X1 | 35, 0.005781, 0, X_ERROR, X5 | 6, 0.002398, 2, DEPOLARIZE2, Y2 | 39, 0.000801, 9, DEPOLARIZE2, Y2 | 50, 0.000801, 4, DEPOLARIZE2, Y11 | 82, 0.000601, 11, DEPOLARIZE2, Y11 | 70, 0.000200, 11, DEPOLARIZE2, Y11 Y5 | 83, 0.000200, 11, DEPOLARIZE2, Y11 Z5 | 94, 0.000200, 11, DEPOLARIZE2, X11 Y5.
+- **Cause (confirmed):** `ReferenceZXPropagator.propagate` injects each fault at the start of its tick layer, but in this circuit every noise instruction comes after the gate, reset or measurement it models, in the same layer.
+  - `qec_zx_dataset.py:106-109`: with `tick_offset == 0` the fault is injected before the first instruction, and the leading `R` erases it. Post-reset X faults on data qubits get an identity frame.
+  - `qec_zx_dataset.py:110-117`: with `tick_offset > 0` the fault is injected right after the TICK, so it is wrongly propagated through the operation it followed. Wrong final frames come only from `CX` here (and `R` at tick 0). Faults after `MR` get wrong detector signatures, but the next reset clears their frame either way, so the stored target is unaffected.
+  - These are one root cause. Tick 0 is the case where the preceding operation is a reset.
+  - Evidence: a replica of the injection reproduces every stored frame. Injecting exactly at the noise instruction reproduces the detector and observable flips of all 219 (d=3) and 1,677 (d=5) DEM errors, while layer-start injection gets 207 and 1,557 of them wrong. Every wrong frame follows a same-layer `R` (7 at d=3, 21 at d=5) or `CX` (92 at d=3, 790 at d=5).
+- **SpiderTraceAdapter:** by code reading it uses the same convention (`qec_zx_dataset.py:136-138`, `:190-192`). Not executed. Its "0/7367 mismatches" validation (e2240d5) compared two implementations with the same injection convention.
+- **Affected results:** every GNN-ZX result in Runs 1 to 4 (commits 3b70134, 893a5a3, d640f39, 44ce02d) and the ZX rows of the two runs in `results/diagnostic/` (7d0a835) used the affected `zx_target`. All of these commits contain 10d3835. `raw_target` is not propagated, so GNN-Raw and GNN-A are not affected.
+- **Not yet known:** whether correct targets change any ZX result. The propagator is not fixed. The three xfail tests will XPASS (and fail, since they are strict) once it is.
