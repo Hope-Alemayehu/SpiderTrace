@@ -156,3 +156,18 @@
 - **SpiderTraceAdapter:** by code reading it uses the same convention (`qec_zx_dataset.py:136-138`, `:190-192`). Not executed. Its "0/7367 mismatches" validation (e2240d5) compared two implementations with the same injection convention.
 - **Affected results:** every GNN-ZX result in Runs 1 to 4 (commits 3b70134, 893a5a3, d640f39, 44ce02d) and the ZX rows of the two runs in `results/diagnostic/` (7d0a835) used the affected `zx_target`. All of these commits contain 10d3835. `raw_target` is not propagated, so GNN-Raw and GNN-A are not affected.
 - **Not yet known:** whether correct targets change any ZX result. The propagator is not fixed. The three xfail tests will XPASS (and fail, since they are strict) once it is.
+
+## 2026-10-06: ZX target fix (no training)
+- **Commit:** FIX_COMMIT (parent 2836225). Training code (`qec_run.py`, `gnn_models.py`, `train.py`) is unchanged.
+- **Fix:** `ReferenceZXPropagator` and `SpiderTraceAdapter` now inject each fault right after its own noise instruction in the flattened circuit (`ZXPropagator.position`, from the error location's stack frames), not at the start of its tick layer. `validate_adapter` now compares the two propagators on every DEM error plus random positions, and `validate_divergence_rate` compares them on the same seeded shots instead of the old fixed baseline (0.856), which had been measured with the buggy reference.
+- **Check:** `pytest tests/test_zx_target_consistency.py` gives 9 passed, with the xfail markers removed. The adapter matches the reference on all 219 (d=3) and 1,677 (d=5) DEM faults.
+
+| Config | ZX match before | ZX match after | Raw match | Wrong ZX shots before | Wrong ZX shots after |
+|---|---|---|---|---|---|
+| d=3, p=0.003 | 0.9776 | 1.0000 | 0.9958 | 0.0920 | 0.0000 |
+| d=5, p=0.003 (Runs 3, 4) | 0.9514 | 1.0000 | 0.9772 | 0.3448 | 0.0000 |
+| d=3, p=0.01 (Runs 1, 2) | 0.9274 | 1.0000 | 0.9818 | 0.2744 | 0.0000 |
+
+- DEM walk: label-inconsistent ZX frames 9 to 0 (d=3) and 47 to 0 (d=5). Frames differing from the exact-position reference 99 to 0 and 811 to 0.
+- "Before" values are recomputed with a replica of the old injection and equal the consistency-check entry above.
+- **Not rerun:** Runs 1 to 4 and `results/diagnostic/` keep the old targets, so their GNN-ZX numbers are not comparable with runs from this commit on.
