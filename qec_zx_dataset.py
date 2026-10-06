@@ -38,11 +38,12 @@ Swap in SpiderTrace
 validation oracle for SpiderTrace. Replace it with a thin adapter around the
 engine; everything else is unchanged.
 
-Caveat on sub-tick timing: the reference injects a fault at its ``tick_offset``
-(layer boundary). For 2-qubit *gate* faults that occur mid-layer, exact
-propagation depends on within-layer position; SpiderTrace, which knows the exact
-gate, is authoritative there. Use the reference to unit-test SpiderTrace on
-before-round data faults (clean layer boundaries) where the two MUST agree.
+Fault position: each fault is injected right after its own noise instruction
+in the flattened circuit (``ZXPropagator.position``), i.e. after the gate, reset
+or measurement it follows in its tick layer. Until 2026-10-06 faults were
+injected at the start of their tick layer, which gave wrong frames for faults
+after a CX or a reset (results/LOG.md). tests/test_zx_target_consistency.py
+checks every frame against the logical label and the DEM.
 
 Verified against stim 1.16.0.
 """
@@ -78,43 +79,92 @@ def build_circuit(d: int, p: float, rounds: Optional[int] = None,
 # --------------------------------------------------------------------------- #
 # 2. ZX propagation seam (replace ReferenceZXPropagator with SpiderTrace)
 # --------------------------------------------------------------------------- #
+def _flatten_with_paths(circuit: stim.Circuit):
+    """Flatten REPEAT blocks. Returns (flat instruction list, index) where index maps
+    the (instruction_offset, iteration_index) path reported in
+    ``CircuitErrorLocation.stack_frames`` to a position in the flat list. Each
+    frame's iteration_index is the iteration of the loop that CONTAINS it (0 at top
+    level), so a REPEAT frame carries its parent's iteration, not its own."""
+    flat: list = []
+    index: dict = {}
+
+    def walk(block, prefix, enclosing_it):
+        for off, item in enumerate(block):
+            if isinstance(item, stim.CircuitRepeatBlock):
+                body = item.body_copy()
+                for it in range(item.repeat_count):
+                    walk(body, prefix + ((off, enclosing_it),), it)
+            else:
+                index[prefix + ((off, enclosing_it),)] = len(flat)
+                flat.append(item)
+
+    walk(circuit, (), 0)
+    return flat, index
+
+
+def _noiseless(inst: stim.CircuitInstruction) -> Optional[stim.CircuitInstruction]:
+    """The instruction without its noise: None for pure noise channels; noisy
+    measurements such as M(p) lose their flip probability."""
+    gd = stim.gate_data(inst.name)
+    if gd.is_noisy_gate and not gd.produces_measurements:
+        return None
+    if gd.produces_measurements and inst.gate_args_copy():
+        return stim.CircuitInstruction(inst.name, inst.targets_copy())
+    return inst
+
+
 class ZXPropagator:
-    """Interface: given a representative Pauli fault, return the final-frame
-    Pauli string on all qubits."""
+    """Interface: given a representative Pauli fault and its position, return the
+    final-frame Pauli string on all qubits.
+
+    A position is an index into the flattened NOISY circuit, and the fault acts
+    immediately AFTER that instruction. For a DEM error, ``position(location)``
+    returns the index of its noise instruction, so the fault is applied after the
+    gate, reset or measurement that precedes it in the same tick layer (the noise
+    instruction always follows the operation it models)."""
+    def __init__(self, circuit: stim.Circuit):
+        self.N = circuit.num_qubits
+        self._flat, self._index = _flatten_with_paths(circuit)
+
+    def position(self, location: stim.CircuitErrorLocation) -> int:
+        key = tuple((sf.instruction_offset, sf.iteration_index)
+                    for sf in location.stack_frames)
+        return self._index[key]
+
     def propagate(self, qubits: Sequence[int], paulis: Sequence[int],
-                  tick_offset: int) -> stim.PauliString:
+                  position: int) -> stim.PauliString:
         raise NotImplementedError
 
 
 class ReferenceZXPropagator(ZXPropagator):
     """Reference propagator via stim.FlipSimulator. Use to validate SpiderTrace.
 
-    NOTE: the circuit's leading RESET clears any frame injected before tick 0,
-    so faults MUST be injected at their tick_offset (which is always >= the
-    resets). This is handled below.
+    Runs the noiseless circuit and injects the fault right after instruction
+    ``position``. (Until 2026-10-06 the fault was injected at the start of its tick
+    layer, which pushed it through the gate or reset it followed; see
+    results/LOG.md and tests/test_zx_target_consistency.py.)
     """
     def __init__(self, circuit: stim.Circuit):
-        self.N = circuit.num_qubits
+        super().__init__(circuit)
         # Deterministic propagation requires the noiseless circuit.
-        self._instructions = list(circuit.without_noise().flattened())
+        self._clean = [_noiseless(inst) for inst in self._flat]
 
-    def propagate(self, qubits, paulis, tick_offset) -> stim.PauliString:
+    def propagate(self, qubits, paulis, position) -> stim.PauliString:
         sim = stim.FlipSimulator(
             batch_size=1, disable_stabilizer_randomization=True, num_qubits=self.N
         )
-        ticks = 0
-        injected = (tick_offset == 0)
-        if injected:
+
+        def inject():
             for q, pl in zip(qubits, paulis):
                 sim.set_pauli_flip(PAULI_CHAR[pl], qubit_index=q, instance_index=0)
-        for inst in self._instructions:
-            sim.do(inst)
-            if inst.name == "TICK":
-                ticks += 1
-                if ticks == tick_offset and not injected:
-                    for q, pl in zip(qubits, paulis):
-                        sim.set_pauli_flip(PAULI_CHAR[pl], qubit_index=q, instance_index=0)
-                    injected = True
+
+        if position < 0:          # before the first instruction
+            inject()
+        for i, inst in enumerate(self._clean):
+            if inst is not None:
+                sim.do(inst)
+            if i == position:
+                inject()
         return sim.peek_pauli_flips()[0]
 
 
@@ -123,72 +173,52 @@ class SpiderTraceAdapter(ZXPropagator):
 
     Reuses ``_stim_to_spider_gates`` (from generate_dataset.py) for the
     H / CNOT / CZ conversion, and drives ``spidertrace.engine.propagate_errors``
-    over the gate layers that follow the injection point.
+    over the gates that follow the injection point.
 
     Resets are modelled directly with stim's Z-basis reset rule: ``R`` / ``MR``
     discard the X-like component of the frame and keep the Z-like component
     (X -> I, Y -> Z, Z -> Z). This is how an X-type ancilla fault gets
     "explained away" at the next reset -- matching ``stim.FlipSimulator``. The
     trailing ``M`` (no reset) is ignored so data-qubit frames persist to the
-    final frame. These are exactly the conditions under which the reference and
-    SpiderTrace MUST agree, per the module docstring.
+    final frame.
 
-    The injection seam matches ReferenceZXPropagator: a fault at ``tick_offset``
-    T is acted on by precisely the operations whose "tick bucket" (number of
-    TICKs already seen) is >= T -- i.e. everything after the T-th TICK.
+    The injection seam matches ReferenceZXPropagator: a fault at ``position`` is
+    acted on by exactly the operations that come after that instruction in the
+    flattened noisy circuit. Each instruction is its own event, so a position can
+    never fall inside a group of gates.
     """
 
     def __init__(self, circuit: stim.Circuit):
+        super().__init__(circuit)
         # Lazy imports so users of the reference path don't need spidertrace.
         from generate_dataset import _stim_to_spider_gates
 
-        self.N = circuit.num_qubits
-        # Ordered event stream over the NOISELESS circuit. Each event is
-        # (tick_bucket, "gates", [Gate, ...]) or (tick_bucket, "reset", [q, ...]).
+        # Ordered event stream: (flat_index, "gates", [Gate, ...]) or
+        # (flat_index, "reset", [q, ...]).
         self._events: list = []
-        instrs = list(circuit.without_noise().flattened())
-        self.num_ticks = sum(1 for i in instrs if i.name == "TICK")
-
-        tick = 0
-        pending = stim.Circuit()        # run of consecutive H/CNOT/CZ instrs
-        pending_tick = 0
-
-        def flush():
-            if len(pending) > 0:
-                gates = _stim_to_spider_gates(pending)
-                if gates:
-                    self._events.append((pending_tick, "gates", gates))
-
-        for inst in instrs:
+        for i, inst in enumerate(self._flat):
             name = inst.name
-            if name == "TICK":
-                flush()
-                pending = stim.Circuit()
-                tick += 1
-                pending_tick = tick
-            elif name in ("H", "CX", "CNOT", "CZ"):
-                if len(pending) == 0:
-                    pending_tick = tick
-                pending.append(inst)
+            if name in ("H", "CX", "CNOT", "CZ"):
+                single = stim.Circuit()
+                single.append(inst)
+                gates = _stim_to_spider_gates(single)
+                if gates:
+                    self._events.append((i, "gates", gates))
             elif name in ("R", "MR"):
-                # Reset clears the frame on its targets. Flush gates first so
-                # ordering (gates-then-reset within a tick) is preserved.
-                flush()
-                pending = stim.Circuit()
                 qs = [t.qubit_value for t in inst.targets_copy() if t.is_qubit_target]
-                self._events.append((tick, "reset", qs))
-            # M (no reset), DETECTOR, OBSERVABLE_INCLUDE, QUBIT_COORDS: no frame effect.
-        flush()
+                self._events.append((i, "reset", qs))
+            # M (no reset), noise, TICK, DETECTOR, OBSERVABLE_INCLUDE, QUBIT_COORDS:
+            # no frame effect.
 
-    def propagate(self, qubits, paulis, tick_offset) -> stim.PauliString:
+    def propagate(self, qubits, paulis, position) -> stim.PauliString:
         from spidertrace.engine import propagate_errors
         from spidertrace.error import PauliError
 
         # current Pauli frame: qubit -> "X"/"Y"/"Z"
         errors = {q: PAULI_CHAR[pl] for q, pl in zip(qubits, paulis)}
 
-        for ev_tick, kind, payload in self._events:
-            if ev_tick < tick_offset:
+        for ev_index, kind, payload in self._events:
+            if ev_index <= position:
                 continue
             if kind == "reset":
                 # Z-basis reset (R / MR -> |0>): the X-like component
@@ -229,6 +259,16 @@ class FaultTables:
     num_detectors: int
 
 
+def _fault_paulis(loc: stim.CircuitErrorLocation) -> Tuple[List[int], List[int]]:
+    """Qubits and Pauli indices (1=X, 2=Y, 3=Z) of a representative fault."""
+    qubits, paulis = [], []
+    for gtc in loc.flipped_pauli_product:
+        gt = gtc.gate_target
+        qubits.append(gt.qubit_value)
+        paulis.append(1 if gt.is_x_target else (2 if gt.is_y_target else 3))
+    return qubits, paulis
+
+
 def build_fault_tables(circuit: stim.Circuit,
                        propagator: Optional[ZXPropagator] = None) -> Tuple[FaultTables, stim.CompiledDemSampler]:
     """Precompute, for each DEM error, its raw and ZX-propagated Pauli string.
@@ -256,13 +296,7 @@ def build_fault_tables(circuit: stim.Circuit,
 
     for e in expl:
         loc = e.circuit_error_locations[0]            # representative location
-        qubits, paulis = [], []
-        for gtc in loc.flipped_pauli_product:
-            gt = gtc.gate_target
-            q = gt.qubit_value
-            pl = 1 if gt.is_x_target else (2 if gt.is_y_target else 3)
-            qubits.append(q)
-            paulis.append(pl)
+        qubits, paulis = _fault_paulis(loc)
 
         # raw: Pauli(s) at original qubit location, NOT propagated
         raw = stim.PauliString(N)
@@ -272,7 +306,7 @@ def build_fault_tables(circuit: stim.Circuit,
 
         # zx: same fault propagated to final frame (via SpiderTrace / reference)
         if qubits:
-            zx_pauli.append(propagator.propagate(qubits, paulis, loc.tick_offset))
+            zx_pauli.append(propagator.propagate(qubits, paulis, propagator.position(loc)))
         else:
             zx_pauli.append(stim.PauliString(N))
 
@@ -523,53 +557,65 @@ def _data_qubits(circuit: stim.Circuit) -> List[int]:
 
 def validate_adapter(d: int = 3, p: float = 0.02, n_trials: int = 50,
                      seed: int = 0) -> Tuple[int, int]:
-    """Compare SpiderTraceAdapter to ReferenceZXPropagator on random single-qubit
-    data faults across random tick offsets (clean layer boundaries, where the
-    two MUST agree). Prints a match count and any mismatch details."""
+    """Compare SpiderTraceAdapter to ReferenceZXPropagator on every DEM error's
+    representative fault at its exact position, plus ``n_trials`` random
+    single-qubit data faults at random positions (-1 = before the circuit).
+    Prints a match count and any mismatch details."""
     circ = build_circuit(d, p)
     ref = ReferenceZXPropagator(circ)
     adapter = SpiderTraceAdapter(circ)
     N = circ.num_qubits
+    cases = []
+    for e in circ.explain_detector_error_model_errors(
+            reduce_to_one_representative_error=True):
+        loc = e.circuit_error_locations[0]
+        qubits, paulis = _fault_paulis(loc)
+        if qubits:
+            cases.append((qubits, paulis, ref.position(loc)))
     data = _data_qubits(circ)
     rng = np.random.default_rng(seed)
+    for _ in range(n_trials):
+        cases.append(([int(rng.choice(data))], [int(rng.integers(1, 4))],
+                      int(rng.integers(-1, len(ref._flat)))))
 
     matches = 0
     mismatches = []
-    for _ in range(n_trials):
-        q = int(rng.choice(data))
-        pl = int(rng.integers(1, 4))                 # 1=X, 2=Y, 3=Z
-        tick = int(rng.integers(0, adapter.num_ticks + 1))
-        r = ref.propagate([q], [pl], tick)
-        a = adapter.propagate([q], [pl], tick)
+    for qubits, paulis, pos in cases:
+        r = ref.propagate(qubits, paulis, pos)
+        a = adapter.propagate(qubits, paulis, pos)
         if _pauli_indices(r, N) == _pauli_indices(a, N):
             matches += 1
         else:
-            mismatches.append((q, PAULI_CHAR[pl], tick, r, a))
+            mismatches.append((qubits, paulis, pos, r, a))
 
-    print(f"SpiderTrace adapter validation: {matches}/{n_trials} match")
-    for q, plc, tick, r, a in mismatches:
+    print(f"SpiderTrace adapter validation: {matches}/{len(cases)} match "
+          f"({len(cases) - n_trials} DEM faults + {n_trials} random)")
+    for qubits, paulis, pos, r, a in mismatches:
         diff = {i: (PAULI_CHAR[r[i]], PAULI_CHAR[a[i]])
                 for i in range(N) if r[i] != a[i]}
-        print(f"  MISMATCH fault={plc} on q={q} @tick={tick}: "
+        fault = " ".join(f"{PAULI_CHAR[pl]}{q}" for q, pl in zip(qubits, paulis))
+        print(f"  MISMATCH fault={fault} after instruction {pos}: "
               f"(ref, adapter) differ at {diff}")
-    return matches, n_trials
+    return matches, len(cases)
 
 
 def validate_divergence_rate(d: int = 3, p: float = 0.02, shots: int = 2000,
-                             target: float = 0.856, tol: float = 0.05,
-                             seed: int = 0) -> float:
-    """Re-run the smoke-test divergence metric with the SpiderTrace adapter and
-    confirm it stays within ``tol`` of the reference baseline ``target``."""
+                             seed: int = 0) -> Tuple[float, float]:
+    """Smoke-test divergence metric (raw_target != zx_target) with the reference and
+    with the SpiderTrace adapter, on the same seeded shots. They must be equal."""
     circ = build_circuit(d, p)
-    tables, sampler = build_fault_tables(circ, propagator=SpiderTraceAdapter(circ))
-    tuples = list(sample_tuples(circ, tables, sampler, shots, seed=seed))
-    differ = float(np.mean(
-        [not np.array_equal(t["raw_target"], t["zx_target"]) for t in tuples]))
-    ok = abs(differ - target) <= tol
-    print(f"SpiderTrace divergence rate (raw != zx): {differ:.3f}  "
-          f"(reference baseline {target:.3f}, tol {tol:.2f}) -> "
-          f"{'OK' if ok else 'OUT OF RANGE'}")
-    return differ
+    dem = circ.detector_error_model(decompose_errors=False, flatten_loops=True)
+    rates = []
+    for propagator in (ReferenceZXPropagator(circ), SpiderTraceAdapter(circ)):
+        tables, _ = build_fault_tables(circ, propagator=propagator)
+        sampler = dem.compile_sampler(seed=seed)
+        tuples = list(sample_tuples(circ, tables, sampler, shots))
+        rates.append(float(np.mean(
+            [not np.array_equal(t["raw_target"], t["zx_target"]) for t in tuples])))
+    ok = rates[0] == rates[1]
+    print(f"divergence rate (raw != zx): reference {rates[0]:.3f}, "
+          f"SpiderTrace {rates[1]:.3f} -> {'OK' if ok else 'DIFFERENT'}")
+    return rates[0], rates[1]
 
 
 # --------------------------------------------------------------------------- #
@@ -598,4 +644,4 @@ if __name__ == "__main__":
     # ---- SpiderTrace adapter validations ----
     print("\n--- SpiderTrace adapter validation ---")
     validate_adapter(d=d, p=p, n_trials=50, seed=0)
-    validate_divergence_rate(d=d, p=p, shots=shots, target=0.856, tol=0.05)
+    validate_divergence_rate(d=d, p=p, shots=shots, seed=0)

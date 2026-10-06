@@ -6,12 +6,13 @@ measurements of a set of data qubits, so the label equals the parity of X or Y
 components of the final frame on those qubits. raw_target is NOT a propagated
 frame, so its match rate is reported for comparison only and never asserted.
 
-Known failure (2026-10-06, see results/LOG.md): ReferenceZXPropagator injects
-each fault at the START of its tick layer (qec_zx_dataset.py:106-117), but the
-noise instruction comes AFTER the gate, reset or measurement it models in that
-layer. The tests that assert ZX consistency are therefore marked xfail(strict),
-so they start failing (XPASS) once the propagator is fixed and the markers must
-be removed.
+History (results/LOG.md, 2026-10-06): ReferenceZXPropagator used to inject
+each fault at the START of its tick layer, but the noise instruction comes AFTER
+the gate, reset or measurement it models in that layer. The propagators now
+inject at the noise instruction itself (ZXPropagator.position). The tests below
+check the stored frames against the label, the DEM and an independent reference
+in this file. propagate_layer_start() replicates the old injection, so the report
+can show the before and after numbers side by side.
 
 Run as a script for the full report:
     python tests/test_zx_target_consistency.py
@@ -32,8 +33,6 @@ from qec_zx_dataset import build_circuit, build_fault_tables, sample_tuples  # n
 SAMPLED_CONFIGS = [(3, 0.003), (5, 0.003)]
 N_SHOTS = 5000
 SAMPLER_SEED = 12345
-KNOWN_BUG = ("ReferenceZXPropagator injects faults at the start of their tick layer, "
-             "before the gate/reset/measurement they follow (results/LOG.md, 2026-10-06)")
 
 
 # ---- helpers ------------------------------------------------------------------------
@@ -145,7 +144,7 @@ def _signature(sim):
 
 
 def propagate_layer_start(circuit, loc):
-    """Replicates ReferenceZXPropagator.propagate (qec_zx_dataset.py:101-118): inject
+    """Replicates the OLD ReferenceZXPropagator.propagate (before 2026-10-06): inject
     before the first instruction if tick_offset == 0, else right after the
     tick_offset-th TICK. Also returns the detector/observable signature."""
     sim = stim.FlipSimulator(batch_size=1, disable_stabilizer_randomization=True,
@@ -230,109 +229,118 @@ def dem_walk(d, p):
             "flips_obs": L,
             "zx_label_ok": x_parity_pauli(zx, obs) == L,
             "raw_label_ok": x_parity_pauli(tables.raw_pauli[i], obs) == L,
-            "repo_frame_replicated": frame_ls == zx,
+            "repo_frame_matches_exact": zx == frame_ex,
             "layer_start_signature_ok": sig_ls is None or sig_ls == (dets, L),
             "exact_signature_ok": sig_ex is None or sig_ex == (dets, L),
-            "frame_differs_from_exact": frame_ls != frame_ex,
+            "layer_start_frame_wrong": frame_ls != frame_ex,
+            "layer_start_label_ok": x_parity_pauli(frame_ls, obs) == L,
             "frame_exact": frame_ex,
+            "frame_layer_start": frame_ls,
             "preceding_ops": pre,
         })
     return rows
 
 
-def shots_with_wrong_zx_target(d, p, shots=N_SHOTS, seed=SAMPLER_SEED):
-    """Fraction of sampled shots whose stored zx_target (product of repo frames over
-    the fired DEM errors) differs from the product of exact-position frames."""
+def sampled_frame_rates(d, p, frames, shots=N_SHOTS, seed=SAMPLER_SEED):
+    """For a per-DEM-error frame table, on the same seeded shots as above: the
+    fraction whose accumulated frame matches the label, and the fraction whose
+    accumulated frame differs from the exact-position reference."""
     circuit, tables, obs, dem = setup(d, p)
     exact = [r["frame_exact"] for r in dem_walk(d, p)]
-    _, _, errs = dem.compile_sampler(seed=seed).sample(shots=shots, return_errors=True)
-    wrong = 0
-    for row in errs:
-        repo = stim.PauliString(circuit.num_qubits)
+    _, labels, errs = dem.compile_sampler(seed=seed).sample(shots=shots, return_errors=True)
+    match = wrong = 0
+    for row, y in zip(errs, labels[:, 0]):
+        acc = stim.PauliString(circuit.num_qubits)
         ref = stim.PauliString(circuit.num_qubits)
         for i in np.flatnonzero(row):
-            repo *= tables.zx_pauli[i]
+            acc *= frames[i]
             ref *= exact[i]
-        wrong += repo != ref
-    return wrong / shots
+        match += x_parity_pauli(acc, obs) == int(y)
+        wrong += acc != ref
+    return match / shots, wrong / shots
 
 
 # ---- tests ----------------------------------------------------------------------------
 @pytest.mark.parametrize("d,p", SAMPLED_CONFIGS)
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=KNOWN_BUG)
 def test_sampled_zx_targets_match_label(d, p):
     r = sampled_match_rates(d, p)
     print(f"d={d} p={p}: ZX match {r['zx']:.4f}, Raw match {r['raw']:.4f} over {r['shots']} shots")
     assert r["zx"] == 1.0
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=KNOWN_BUG)
 def test_dem_errors_zx_frames_match_label_d3():
     bad = [r for r in dem_walk(3, 0.003) if not r["zx_label_ok"]]
     assert not bad, f"{len(bad)} DEM errors have label-inconsistent ZX frames"
 
 
-def test_layer_start_replica_matches_repo_frames():
-    """The diagnosis is about the repo's own code: the replica reproduces every
-    stored zx_target frame."""
-    rows = dem_walk(3, 0.003)
-    assert all(r["repo_frame_replicated"] for r in rows)
+@pytest.mark.parametrize("d,p", SAMPLED_CONFIGS)
+def test_repo_frames_match_exact_position_reference(d, p):
+    """Every stored zx_target frame equals this file's independent reference."""
+    rows = dem_walk(d, p)
+    assert all(r["repo_frame_matches_exact"] for r in rows)
 
 
-def test_exact_position_injection_reproduces_every_dem_signature():
-    """The reference used for the diagnosis is right: injecting at the noise
-    instruction reproduces each DEM error's detectors and observable flip."""
-    rows = dem_walk(3, 0.003)
+@pytest.mark.parametrize("d,p", SAMPLED_CONFIGS)
+def test_exact_position_injection_reproduces_every_dem_signature(d, p):
+    """The reference is right: injecting at the noise instruction reproduces each
+    DEM error's detectors and observable flip."""
+    rows = dem_walk(d, p)
     assert all(r["exact_signature_ok"] for r in rows)
 
 
-def test_every_wrong_frame_follows_a_same_layer_operation():
-    """Every frame that differs from the exact reference belongs to a fault whose
-    tick layer has a gate, reset or measurement on its qubits before the noise.
-    (The converse does not hold: in this circuit every noise instruction follows
-    such an operation, and the frame survives whenever the operation commutes
-    with the fault.)"""
+def test_spidertrace_adapter_matches_reference_on_every_dem_error():
+    pytest.importorskip("pyzx")  # the spidertrace package imports its ZX visualiser
+    from qec_zx_dataset import SpiderTraceAdapter
+    circuit = build_circuit(3, 0.003)
+    adapter_tables, _ = build_fault_tables(circuit, propagator=SpiderTraceAdapter(circuit))
+    _, tables, _, _ = setup(3, 0.003)
+    assert adapter_tables.zx_pauli == tables.zx_pauli
+
+
+def test_old_layer_start_errors_all_follow_a_same_layer_operation():
+    """Documents the 2026-10-06 bug: every frame the old layer-start injection got
+    wrong belongs to a fault whose tick layer has a gate, reset or measurement on
+    its qubits before the noise. (The converse does not hold: in this circuit
+    every noise instruction follows such an operation, and the frame survives
+    whenever the operation commutes with the fault.)"""
     rows = dem_walk(3, 0.003)
-    wrong = [r for r in rows if r["frame_differs_from_exact"]]
+    wrong = [r for r in rows if r["layer_start_frame_wrong"]]
     assert wrong and all(r["preceding_ops"] for r in wrong)
 
 
 # ---- report -----------------------------------------------------------------------------
 def report():
-    print("Sampled shots (seeded sampler, seed 12345): X-parity of target on observable "
-          "qubits vs logical label")
+    print("Sampled shots (seeded sampler, seed 12345, 5,000 shots). 'before' = old "
+          "layer-start injection (replica), 'after' = repo targets now.")
+    print(f"  {'config':<14} {'ZX match before':>15} {'ZX match after':>14} {'Raw match':>9} "
+          f"{'wrong ZX shots before':>21} {'after':>6}")
     for d, p in SAMPLED_CONFIGS + [(3, 0.01)]:
         r = sampled_match_rates(d, p)
-        print(f"  d={d} p={p}: shots={r['shots']}  ZX match={r['zx']:.4f}  "
-              f"Raw match={r['raw']:.4f}  (label=1 rate {r['flip_rate']:.4f})")
-
-    print("\nSampled shots whose stored zx_target differs from the exact-position target")
-    for d, p in SAMPLED_CONFIGS + [(3, 0.01)]:
-        print(f"  d={d} p={p}: {shots_with_wrong_zx_target(d, p):.4f} of {N_SHOTS} shots")
-
-    for d, p in ((3, 0.003), (5, 0.003)):
         rows = dem_walk(d, p)
-        bad = [r for r in rows if not r["zx_label_ok"]]
-        wrong = [r for r in rows if r["frame_differs_from_exact"]]
-        sig_bad = [r for r in rows if not r["layer_start_signature_ok"]]
-        print(f"\nDEM walk d={d} p={p}: {len(rows)} errors")
-        print(f"  label-inconsistent ZX frames: {len(bad)} (total prob {sum(r['prob'] for r in bad):.5f})")
-        print(f"  ZX frame differs from exact-position injection: {len(wrong)} "
-              f"(total prob {sum(r['prob'] for r in wrong):.5f})")
-        print(f"  layer-start injection gives wrong detector/observable signature: {len(sig_bad)}")
-        print(f"  exact-position injection reproduces every signature: "
-              f"{all(r['exact_signature_ok'] for r in rows)}")
-        causes = {}
-        for r in wrong:
-            key = f"tick {'0' if r['tick_offset'] == 0 else '>0'}, after {'+'.join(sorted(set(r['preceding_ops'])))}"
-            causes[key] = causes.get(key, 0) + 1
-        print(f"  wrong frames by cause: {causes}")
-        if d == 3:
-            print("  label-inconsistent ZX frames (d=3):")
-            print(f"    {'idx':>4} {'prob':>9} {'tick':>4} {'gate':<11} {'fault':<10} {'L':>1}  preceded by")
-            for r in sorted(bad, key=lambda r: -r["prob"]):
-                print(f"    {r['index']:>4} {r['prob']:>9.6f} {r['tick_offset']:>4} {r['gate']:<11} "
-                      f"{r['fault']:<10} {r['flips_obs']:>1}  {', '.join(r['preceding_ops'])}")
+        _, tables, _, _ = setup(d, p)
+        old_match, old_wrong = sampled_frame_rates(d, p, [x["frame_layer_start"] for x in rows])
+        _, new_wrong = sampled_frame_rates(d, p, tables.zx_pauli)
+        print(f"  d={d} p={p:<8} {old_match:>15.4f} {r['zx']:>14.4f} {r['raw']:>9.4f} "
+              f"{old_wrong:>21.4f} {new_wrong:>6.4f}")
+
+    for d, p in SAMPLED_CONFIGS:
+        rows = dem_walk(d, p)
+        prob = lambda rs: sum(x["prob"] for x in rs)
+        old_bad = [x for x in rows if not x["layer_start_label_ok"]]
+        new_bad = [x for x in rows if not x["zx_label_ok"]]
+        old_wrong = [x for x in rows if x["layer_start_frame_wrong"]]
+        new_wrong = [x for x in rows if not x["repo_frame_matches_exact"]]
+        print(f"\nDEM walk d={d} p={p}: {len(rows)} errors (before -> after)")
+        print(f"  label-inconsistent ZX frames: {len(old_bad)} (prob {prob(old_bad):.5f}) -> "
+              f"{len(new_bad)} (prob {prob(new_bad):.5f})")
+        print(f"  frames differing from exact reference: {len(old_wrong)} (prob {prob(old_wrong):.5f}) -> "
+              f"{len(new_wrong)} (prob {prob(new_wrong):.5f})")
+        print(f"  exact reference reproduces every DEM signature: "
+              f"{all(x['exact_signature_ok'] for x in rows)}")
+        if new_bad:
+            print("  still label-inconsistent:")
+            for x in sorted(new_bad, key=lambda x: -x["prob"]):
+                print(f"    {x['index']:>4} {x['prob']:.6f} tick={x['tick_offset']} {x['gate']} {x['fault']}")
 
 
 if __name__ == "__main__":
