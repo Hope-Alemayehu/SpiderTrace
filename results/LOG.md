@@ -158,7 +158,7 @@
 - **Not yet known:** whether correct targets change any ZX result. The propagator is not fixed. The three xfail tests will XPASS (and fail, since they are strict) once it is.
 
 ## 2026-10-06: ZX target fix (no training)
-- **Commit:** FIX_COMMIT (parent 2836225). Training code (`qec_run.py`, `gnn_models.py`, `train.py`) is unchanged.
+- **Commit:** d92b05a (parent 2836225). Training code (`qec_run.py`, `gnn_models.py`, `train.py`) is unchanged.
 - **Fix:** `ReferenceZXPropagator` and `SpiderTraceAdapter` now inject each fault right after its own noise instruction in the flattened circuit (`ZXPropagator.position`, from the error location's stack frames), not at the start of its tick layer. `validate_adapter` now compares the two propagators on every DEM error plus random positions, and `validate_divergence_rate` compares them on the same seeded shots instead of the old fixed baseline (0.856), which had been measured with the buggy reference.
 - **Check:** `pytest tests/test_zx_target_consistency.py` gives 9 passed, with the xfail markers removed. The adapter matches the reference on all 219 (d=3) and 1,677 (d=5) DEM faults.
 
