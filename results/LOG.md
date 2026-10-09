@@ -171,3 +171,32 @@
 - DEM walk: label-inconsistent ZX frames 9 to 0 (d=3) and 47 to 0 (d=5). Frames differing from the exact-position reference 99 to 0 and 811 to 0.
 - "Before" values are recomputed with a replica of the old injection and equal the consistency-check entry above.
 - **Not rerun:** Runs 1 to 4 and `results/diagnostic/` keep the old targets, so their GNN-ZX numbers are not comparable with runs from this commit on.
+
+## Run 5: first look after ZX fix (d=3, 1 seed)
+- **Status:** first look, not a result. One seed, at d=3, where the arms sit near the MWPM ceiling.
+- **Date:** 2026-10-06
+- **Commit:** 224b571 (clean). It contains the ZX target fix (d92b05a).
+- **Where:** Colab, GPU
+- **Command:** `python qec_run.py --d 3 --p 0.01 --shots 50000 --seeds 0 --lambdas 0.01 0.1 0.5 1.0 --epochs 100 --device cuda --outdir /content/drive/MyDrive/SpiderTrace_results/fixed_d3 --aux-data-qubits-only --aux-class-weight inv-freq`
+- **Setup:** d=3, p=0.01, 50k shots, seed 0, λ ∈ {0.01, 0.1, 0.5, 1.0}, 100 epochs, split_seed 12345 (7,500 test shots), both aux flags, fixed ZX targets
+- **JSON:** results/run_20261006T102236Z_d3_p0.01.json
+
+| Arm | Test LER | Selected λ |
+|---|---|---|
+| MWPM | 0.0545 | n/a |
+| GNN-A | 0.0592 | n/a |
+| GNN-Raw | 0.0597 | 0.1 |
+| GNN-ZX | 0.0589 | 0.1 |
+
+- **McNemar (ZX vs Raw):** ZX right & Raw wrong = 56, Raw right & ZX wrong = 50, p = 0.627.
+- **McNemar (ZX vs MWPM):** ZX right & MWPM wrong = 82, MWPM right & ZX wrong = 115, p = 0.022.
+- **Aux diagnostics:**
+
+| Arm | Non-I target density | Non-I recall | collapsed_to_identity |
+|---|---|---|---|
+| GNN-Raw | 0.0984 | 0.7552 | false |
+| GNN-ZX | 0.1222 | 0.7169 | false |
+
+- **Notes:**
+  - Within the ZX arm, test LER ranges from 0.0589 to 0.0677 across λ, so model-to-model noise is larger than the differences between arms.
+  - First look only: one seed, d=3 ceiling. Not a result.
