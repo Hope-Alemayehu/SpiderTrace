@@ -292,3 +292,46 @@
   - No loss spikes: no epoch-to-epoch jump above 1.3x in train or val loss, unlike Runs 6 and 7.
   - At the best epoch val loss (0.0209) is below train loss (0.0247). Train loss is measured with dropout active, so this is not a sign of a problem.
   - GNN-A is now 1.8x MWPM on the same shots (65 vs 36 errors), down from 2.6x in Run 6 (93 vs 36).
+
+## Run 9: normalized backbone at 35k shots (100 epochs)
+- **Date:** 2026-10-17
+- **Commit:** 4f2e17f (clean). It contains the backbone options (5307ef0).
+- **Where:** Colab, GPU
+- **Command:** `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 35000 --arms A --seeds 0 --epochs 100 --device cuda --expect-mwpm-errors 36 --norm layer --readout mean-max --outdir /content/drive/MyDrive/SpiderTrace_results/data_scaling`
+- **Setup:** as Run 6 (GNN-A only, d=5, p=0.003, seed 0, 35,000 train shots, up to 100 epochs, same test set: `--expect-mwpm-errors 36` passed, and MWPM gets exactly the same test shots wrong as in Run 6). The only change is the backbone: LayerNorm after each GINEConv (before the ReLU) and a mean+max readout instead of add+mean+max. 78,725 parameters, against 78,053 in Run 6.
+- **JSON:** results/run_20261017T070707Z_d5_p0.003.json
+
+| Arm | Test LER | Test errors | Val LER |
+|---|---|---|---|
+| MWPM | 0.0048 | 36 | n/a |
+| GNN-A | 0.0147 | 110 | 0.0133 |
+
+- **Statistical uncertainty per LER:** about ±0.0014 (7,500 test shots)
+- **McNemar (A vs MWPM):** A right & MWPM wrong = 13, MWPM right & A wrong = 87, p = 1.3e-14. MWPM is significantly better.
+- **Training:** epochs_run 100 (the cap), best_epoch 100, wall time 1,120 s (18.7 min, 11.2 s per epoch).
+- **Loss:**
+  - Final epoch (100), which is also the best epoch: train 0.0383, val 0.0379.
+  - Epoch 1: train 0.433, val 0.439 (Run 6: train 4.257, val 0.454).
+- **Paired comparison with Run 6** (same data, seed and test shots; old backbone), from test_wrong_idx in both JSONs:
+
+| | Shots |
+|---|---|
+| Wrong in Run 6 | 93 |
+| Wrong in Run 9 | 110 |
+| Fixed by Run 9 (wrong in Run 6, right in Run 9) | 10 |
+| Newly wrong in Run 9 (right in Run 6, wrong in Run 9) | 27 |
+| Wrong in both | 83 |
+
+  - Exact binomial McNemar: p = 0.0076 (10 vs 27 of 37 discordant shots).
+- **Notes:**
+  - Val loss stays between 0.430 and 0.442 for epochs 1 to 16 and first drops below 0.40 at epoch 18 (Run 6: epoch 16).
+  - After that it descends slowly, between 0.169 and 0.099 over epochs 22 to 55, then from 0.083 at epoch 60 to 0.054 at epoch 64. At epochs 40, 55 and 60, Run 9's val loss is 0.126, 0.104 and 0.083, against 0.087, 0.051 and 0.065 in Run 6.
+  - Loss spikes: val loss jumps at epochs 58 (0.0853 to 0.1109) and 89 (0.0404 to 0.0759). No train-loss jump above 1.3x.
+
+## Interpretation (Run 9)
+- **The hypothesis** was that the unnormalized backbone's huge initial logits cause the early plateau and limit learning. Initial BCE did drop, from about 126 to 0.67 in the local check at initialization (2026-10-17, local CPU, 256 locally drawn d=5 shots; not from a run JSON). In Run 9 the epoch-1 train loss is 0.433 against 4.257 in Run 6. But the plateau remained: val loss stayed near the trivial 0.44 until about epoch 16, then a second slow phase around 0.10 to 0.13 lasted until about epoch 60.
+- **So the early plateau is not caused by initial scale.**
+- **At equal budget (35k shots, 100 epochs) Run 9 is significantly worse than Run 6:** 110 vs 93 errors, paired p = 0.0076. best_epoch was 100, so it was still improving. It learns more slowly; it has not been shown to be worse at convergence.
+- **Caveats:** one seed per backbone. Run 9 changed two things at once (LayerNorm and readout) and kept lr 1e-3, which was not retuned for the normalized backbone.
+- **Decision:** keep the default backbone for now. The `--norm` and `--readout` options stay in the code, off by default.
+- **Next:** Run 10, 1M training shots, default backbone, on Kaggle.
