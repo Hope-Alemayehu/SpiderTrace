@@ -200,3 +200,56 @@
 - **Notes:**
   - Within the ZX arm, test LER ranges from 0.0589 to 0.0677 across λ, so model-to-model noise is larger than the differences between arms.
   - First look only: one seed, d=3 ceiling. Not a result.
+
+## Run 6: data scaling, GNN-A at 35k shots (100 epochs)
+- **Date:** 2026-10-17
+- **Commit:** 8ac71cb (clean)
+- **Where:** Colab, GPU
+- **Command:** `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 35000 --arms A --seeds 0 --epochs 100 --device cuda --expect-mwpm-errors 36 --outdir /content/drive/MyDrive/SpiderTrace_results/data_scaling`
+- **Setup:** GNN-A only, d=5, p=0.003, seed 0, up to 100 epochs. Base split of 50k shots with split_seed 12345: 35,000 train (the base train split, no extra shots), 7,500 val, 7,500 test. This is the same test set as Runs 3 to 5: `--expect-mwpm-errors 36` passed.
+- **JSON:** results/run_20261017T045025Z_d5_p0.003.json
+
+| Arm | Test LER | Test errors | Val LER |
+|---|---|---|---|
+| MWPM | 0.0048 | 36 | n/a |
+| GNN-A | 0.0124 | 93 | 0.0119 |
+
+- **Statistical uncertainty per LER:** about ±0.0013 (7,500 test shots)
+- **McNemar (A vs MWPM):** A right & MWPM wrong = 13, MWPM right & A wrong = 70, p = 1.3e-10. MWPM is significantly better.
+- **Training:** epochs_run 100 (the cap), best_epoch 98, wall time 1,130 s (18.8 min, 11.3 s per epoch).
+- **Loss:**
+  - Final epoch (100): train 0.0369, val 0.0385.
+  - Best epoch (98, the restored weights): train 0.0350, val 0.0353.
+- **Notes:**
+  - The best epoch is 98 of 100, so the model was still improving at the cap. Run 7 lifts the cap.
+  - Loss spikes: train loss jumps from 0.0392 to 0.0907 at epoch 77, and val loss jumps at epochs 31 (0.0971 to 0.1296), 60 (0.0468 to 0.0645) and 94 (0.0388 to 0.0542).
+
+## Run 7: data scaling, GNN-A at 35k shots (up to 300 epochs)
+- **Date:** 2026-10-17
+- **Commit:** 8ac71cb (clean)
+- **Where:** Colab, GPU (same host as Run 6)
+- **Command:** `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 35000 --arms A --seeds 0 --epochs 300 --device cuda --expect-mwpm-errors 36 --outdir /content/drive/MyDrive/SpiderTrace_results/data_scaling`
+- **Setup:** as Run 6, but with up to 300 epochs. `--expect-mwpm-errors 36` passed.
+- **JSON:** results/run_20261017T051442Z_d5_p0.003.json
+
+| Arm | Test LER | Test errors | Val LER |
+|---|---|---|---|
+| MWPM | 0.0048 | 36 | n/a |
+| GNN-A | 0.0127 | 95 | 0.0121 |
+
+- **Statistical uncertainty per LER:** about ±0.0013 (7,500 test shots)
+- **McNemar (A vs MWPM):** A right & MWPM wrong = 12, MWPM right & A wrong = 71, p = 2.4e-11. MWPM is significantly better.
+- **Training:** epochs_run 116 (early stop, 10 epochs without val-loss improvement), best_epoch 106, wall time 1,310 s (21.8 min, 11.3 s per epoch).
+- **Loss:**
+  - Final epoch (116): train 0.0342, val 0.0395.
+  - Best epoch (106, the restored weights): train 0.0341, val 0.0347.
+- **Notes:**
+  - Run 7 is not a continuation of Run 6. Same commit, seed and host, but train loss already differs at epoch 1 (4.2572 vs 4.2598), most likely from nondeterministic GPU kernels. The two runs differ in the epoch cap and in run-to-run noise.
+  - Loss spikes: val loss jumps at epochs 40 (0.0770 to 0.1015) and 48 (0.0657 to 0.0861), and train loss rises from 0.0342 to 0.0434 at epoch 109.
+
+## Interpretation (Runs 6 and 7)
+- **Allowing 300 epochs did not help.** The model early-stopped at epoch 116 (best epoch 106) with test LER 0.0127, against 0.0124 at 100 epochs. That is 95 vs 93 errors, within noise. Both lie inside the range of earlier GNN-A results at 35k shots (0.0115 in Run 3, 0.0132 in Run 4).
+- **The model is not overfitting.** At the restored (best) epoch, train and val loss are nearly equal, about 0.035: 0.0350 vs 0.0353 in Run 6 and 0.0341 vs 0.0347 in Run 7. The model cannot fit its training data better. This points to a capacity or optimization limit (78k parameters, a single linear head, constant lr 1e-3 with visible loss spikes), not to data shortage.
+- **Caveat:** train loss is averaged over each epoch with dropout 0.1 active, while val loss is measured in eval mode. Equal train and val loss is therefore approximate evidence of no generalization gap, not proof.
+- **Pending:** Run 8 (300k training shots, Kaggle) tests whether more data helps.
+- **Planned next if Run 8 is flat:** lr decay and an MLP head at 35k.
