@@ -253,3 +253,42 @@
 - **Caveat:** train loss is averaged over each epoch with dropout 0.1 active, while val loss is measured in eval mode. Equal train and val loss is therefore approximate evidence of no generalization gap, not proof.
 - **Pending:** Run 8 (300k training shots, Kaggle) tests whether more data helps.
 - **Planned next if Run 8 is flat:** lr decay and an MLP head at 35k.
+- **Update after Run 8:** more training data clearly helped. On the same test shots, errors fell from 93 (Run 6, 35k) to 65 (Run 8, 300k), with a paired McNemar p = 0.00062 (see Run 8). The earlier reading "not data shortage" was wrong. Equal train and val loss showed that the model was not memorizing its training set, not that the data was sufficient. Run 7 showed that more steps on the same 35k did not help, so the gain comes from the extra data.
+  - Caveat: the step counts are not matched. Run 7 stopped on its own after its best epoch 106 (about 14.5k gradient steps), while Run 8's best epoch 37 is at about 43k steps. The evidence is that the 35k run stopped improving by its own criterion, not a comparison at equal steps.
+
+## Run 8: data scaling, GNN-A at 300k shots (100 epochs)
+- **Date:** 2026-10-17
+- **Commit:** 8ac71cb (clean). This predates the backbone options (5307ef0), so Run 8 uses the original unnormalized backbone: no norm, add-mean-max readout, the same model as Runs 6 and 7.
+- **Where:** Kaggle, GPU
+- **Command:** `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 300000 --arms A --seeds 0 --epochs 100 --device cuda --expect-mwpm-errors 36 --outdir /kaggle/working/results`
+- **Setup:** GNN-A only, d=5, p=0.003, seed 0, up to 100 epochs. 300,000 train shots: the 35,000 base train shots plus 265,000 extra shots from extra_train_seed 12346. Val (7,500) and test (7,500) are the base split with split_seed 12345, the same test set as Runs 3 to 7: `--expect-mwpm-errors 36` passed, and MWPM gets exactly the same test shots wrong as in Run 6.
+- **JSON:** results/run_20261017T061603Z_d5_p0.003.json
+
+| Arm | Test LER | Test errors | Val LER |
+|---|---|---|---|
+| MWPM | 0.0048 | 36 | n/a |
+| GNN-A | 0.0087 | 65 | 0.0072 |
+
+- **Statistical uncertainty per LER:** about ±0.0011 (7,500 test shots)
+- **McNemar (A vs MWPM):** A right & MWPM wrong = 8, MWPM right & A wrong = 37, p = 1.5e-5. MWPM is still significantly better.
+- **Training:** epochs_run 47 (early stop, 10 epochs without val-loss improvement), best_epoch 37, wall time 3,523 s (58.7 min, 75.0 s per epoch).
+- **Loss:**
+  - Final epoch (47): train 0.0230, val 0.0237.
+  - Best epoch (37, the restored weights): train 0.0247, val 0.0209.
+- **Paired comparison with Run 6** (35k train shots, same model, seed and test shots), from test_wrong_idx in both JSONs:
+
+| | Shots |
+|---|---|
+| Wrong in Run 6 | 93 |
+| Wrong in Run 8 | 65 |
+| Fixed by Run 8 (wrong in Run 6, right in Run 8) | 46 |
+| Newly wrong in Run 8 (right in Run 6, wrong in Run 8) | 18 |
+| Wrong in both | 47 |
+
+  - Exact binomial McNemar: p = 0.00062 (18 vs 46 of 64 discordant shots).
+  - For scale, Run 6 vs Run 7 (same data, differing only by the epoch cap and GPU nondeterminism) gives 19 fixed vs 21 newly wrong. On the same data, two runs disagree on about 40 shots, split evenly; Run 8's split of 46 vs 18 is far from even.
+- **Notes:**
+  - Learning started at epoch 3 instead of about 13: val loss first drops below 0.40 at epoch 3 (0.1483), against epoch 16 in Run 6 and epoch 13 in Run 7. Per gradient step the onset is not earlier: 3 epochs at 300k are about 3.5k steps (1,172 per epoch), against about 2.2k (Run 6) and 1.8k (Run 7) at 35k (137 per epoch).
+  - No loss spikes: no epoch-to-epoch jump above 1.3x in train or val loss, unlike Runs 6 and 7.
+  - At the best epoch val loss (0.0209) is below train loss (0.0247). Train loss is measured with dropout active, so this is not a sign of a problem.
+  - GNN-A is now 1.8x MWPM on the same shots (65 vs 36 errors), down from 2.6x in Run 6 (93 vs 36).
