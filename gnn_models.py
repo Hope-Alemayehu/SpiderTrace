@@ -63,23 +63,46 @@ EDGE_IN_DIM = 6        # [w_norm, dx, dy, dt, is_boundary_edge, flips_obs]
 HIDDEN = 96
 NUM_PAULI = 4          # {I, X, Y, Z}
 NUM_MP_LAYERS = 4      # read at backbone-construction time; override via --mp-layers
-READOUT_DIM = HIDDEN * 3   # add + mean + max -> 288
+READOUT_DIM = HIDDEN * 3   # default readout (add + mean + max) -> 288; see GNNBackbone.out_dim
+
+# Backbone options. The first entry of each is the default and the original behaviour.
+#   norm:    "none"  -> conv -> ReLU (unnormalized; activations grow with depth)
+#            "layer" -> conv -> LayerNorm -> ReLU, one LayerNorm per layer
+#   readout: "add-mean-max" -> concat(add, mean, max) pooling (3 * hidden)
+#            "mean-max"     -> concat(mean, max) pooling (2 * hidden). Every graph
+#                              has the same nodes, so add pool = num_nodes * mean
+#                              pool: dropping it loses no information, only scale.
+NORM_CHOICES = ("none", "layer")
+READOUT_CHOICES = ("add-mean-max", "mean-max")
+_POOLS = {"add-mean-max": (global_add_pool, global_mean_pool, global_max_pool),
+          "mean-max": (global_mean_pool, global_max_pool)}
 
 
 # --------------------------------------------------------------------------- #
 # Shared backbone
 # --------------------------------------------------------------------------- #
 class GNNBackbone(nn.Module):
-    """4x GINEConv (hidden=96) + 3-way global pooling -> 288-dim graph vector."""
+    """4x GINEConv (hidden=96) + global pooling -> graph vector of size out_dim.
+
+    Defaults (norm="none", readout="add-mean-max") give the original 288-dim
+    backbone, parameter for parameter.
+    """
 
     def __init__(self, hidden: int = HIDDEN, num_layers: Optional[int] = None,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1, norm: str = "none",
+                 readout: str = "add-mean-max"):
         super().__init__()
+        if norm not in NORM_CHOICES:
+            raise ValueError(f"norm must be one of {NORM_CHOICES}, got {norm!r}")
+        if readout not in READOUT_CHOICES:
+            raise ValueError(f"readout must be one of {READOUT_CHOICES}, got {readout!r}")
         # Read the module global at construction time (not as a default-arg bound
         # at def time) so --mp-layers can set NUM_MP_LAYERS before models are built.
         if num_layers is None:
             num_layers = NUM_MP_LAYERS
         self.dropout = dropout
+        self.norm = norm
+        self.readout = readout
         self.node_encoder = nn.Linear(NODE_IN_DIM, hidden)
         self.convs = nn.ModuleList()
         for _ in range(num_layers):
@@ -91,19 +114,21 @@ class GNNBackbone(nn.Module):
             )
             # edge_dim projects the EDGE_IN_DIM-dim edge features to `hidden` internally.
             self.convs.append(GINEConv(mlp, train_eps=True, edge_dim=EDGE_IN_DIM))
+        # Empty unless norm="layer", so the default model has exactly the original
+        # parameters and state_dict keys.
+        self.norms = nn.ModuleList(
+            [nn.LayerNorm(hidden) for _ in range(num_layers)] if norm == "layer" else [])
+        self.out_dim = hidden * len(_POOLS[readout])
 
     def forward(self, x, edge_index, edge_attr, batch) -> torch.Tensor:
         x = self.node_encoder(x)
-        for conv in self.convs:
+        for i, conv in enumerate(self.convs):
             x = conv(x, edge_index, edge_attr)
+            if self.norms:
+                x = self.norms[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        graph = torch.cat(
-            [global_add_pool(x, batch),
-             global_mean_pool(x, batch),
-             global_max_pool(x, batch)],
-            dim=1,
-        )
+        graph = torch.cat([pool(x, batch) for pool in _POOLS[self.readout]], dim=1)
         return F.dropout(graph, p=self.dropout, training=self.training)
 
 
@@ -115,11 +140,12 @@ class GNN_A(nn.Module):
 
     has_aux = False
 
-    def __init__(self, num_qubits: int, dropout: float = 0.1):
+    def __init__(self, num_qubits: int, dropout: float = 0.1, norm: str = "none",
+                 readout: str = "add-mean-max"):
         super().__init__()
         self.num_qubits = num_qubits
-        self.backbone = GNNBackbone(dropout=dropout)
-        self.flip_head = nn.Linear(READOUT_DIM, 1)
+        self.backbone = GNNBackbone(dropout=dropout, norm=norm, readout=readout)
+        self.flip_head = nn.Linear(self.backbone.out_dim, 1)
 
     def forward(self, data):
         g = self.backbone(data.x, data.edge_index, data.edge_attr, data.batch)
@@ -141,11 +167,12 @@ class _GNNWithAux(nn.Module):
     aux_key = ""    # "raw_target" or "zx_target"
 
     def __init__(self, num_qubits: int, dropout: float = 0.1,
-                 aux_qubits: Optional[List[int]] = None):
+                 aux_qubits: Optional[List[int]] = None, norm: str = "none",
+                 readout: str = "add-mean-max"):
         super().__init__()
         self.num_qubits = num_qubits
-        self.backbone = GNNBackbone(dropout=dropout)
-        self.flip_head = nn.Linear(READOUT_DIM, 1)
+        self.backbone = GNNBackbone(dropout=dropout, norm=norm, readout=readout)
+        self.flip_head = nn.Linear(self.backbone.out_dim, 1)
         if aux_qubits is None:
             self.aux_slots = num_qubits
         else:
@@ -153,7 +180,7 @@ class _GNNWithAux(nn.Module):
             # buffer so it follows the model across .to(device) and state_dict
             self.register_buffer(
                 "aux_index", torch.as_tensor(list(aux_qubits), dtype=torch.long))
-        self.aux_head = nn.Linear(READOUT_DIM, self.aux_slots * NUM_PAULI)
+        self.aux_head = nn.Linear(self.backbone.out_dim, self.aux_slots * NUM_PAULI)
 
     def forward(self, data):
         g = self.backbone(data.x, data.edge_index, data.edge_attr, data.batch)

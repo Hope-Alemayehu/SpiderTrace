@@ -66,7 +66,7 @@ def _num_qubits_for(d):
     """Qubit count of the rotated surface-code circuit at distance d.
 
     The models are constructed with `num_qubits` (the aux head is
-    Linear(READOUT_DIM, num_qubits * 4)), but the harness only passes `d`. The
+    Linear(backbone.out_dim, num_qubits * 4)), but the harness only passes `d`. The
     count is independent of p -- noise instructions add no qubits -- so any p
     gives the right answer.
     """
@@ -343,6 +343,8 @@ def build_model(kind, d, aux_qubits=None, **hparams):
 
     Class names were correct. Signature is (num_qubits, dropout=0.1) -- NOT (d) --
     so `d` is translated here. gnn_models.MODEL_REGISTRY already maps the arm keys.
+    `hparams` go to the model unchanged; norm= and readout= configure the shared
+    GNNBackbone identically for every arm.
     """
     from gnn_models import MODEL_REGISTRY
     if kind not in MODEL_REGISTRY:
@@ -555,7 +557,8 @@ def provenance(config):
 
 def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             aux_data_qubits_only=False, aux_class_weight="none",
-            train_shots=None, extra_train_seed=None):
+            train_shots=None, extra_train_seed=None,
+            norm="none", readout="add-mean-max"):
     """Run one arm across all seeds, sweeping lambda per seed (Option A) and
     selecting best-by-validation. Returns the full grid plus the selected-lambda
     test results, and keeps the per-example correctness mask on the shared test set
@@ -566,8 +569,12 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     Their defaults reproduce the original behaviour exactly.
 
     train_shots / extra_train_seed resize the train split only (see
-    make_datasets); None keeps the base split."""
+    make_datasets); None keeps the base split.
+
+    norm / readout configure the shared backbone (gnn_models.GNNBackbone) and
+    apply IDENTICALLY to every arm. Their defaults are the original backbone."""
     data_args = dict(train_shots=train_shots, extra_train_seed=extra_train_seed)
+    model_args = dict(norm=norm, readout=readout)
     # GNN-A has no aux head: its lambda grid is a single no-op point.
     arm_lambdas = [0.0] if kind == "A" else list(lambdas)
 
@@ -605,7 +612,8 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             # not reproducible from (seed, config). train() seeds again at its
             # start, so the RNG state entering the data loaders is unchanged.
             _seed_all(seed)
-            model = build_model(kind, d=d, aux_qubits=aux_qubits)
+            model = build_model(kind, d=d, aux_qubits=aux_qubits, **model_args)
+            n_params = sum(t.numel() for t in model.parameters())
             model, train_info = train(model, train_ds, val_ds, lambda_aux=lam,
                                       epochs=epochs, seed=seed, device=device,
                                       aux_class_weight=aux_weights)
@@ -650,6 +658,8 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
                      if kind != "A" else None,
         "aux_class_weights": aux_weights,
         "aux_class_freq_train": aux_freq,
+        # backbone actually built for this arm (identical across seeds and lambdas)
+        "model": {**model_args, "n_params": n_params},
     }
     return summary, test_correct, test_truth
 
@@ -714,6 +724,15 @@ def main():
                     help="stop before training unless MWPM makes exactly this many "
                          "errors on the test split: a fingerprint that the test set "
                          "is the expected one. Default: no check.")
+    # ---- backbone options (all arms). Defaults reproduce the ORIGINAL backbone. ----
+    from gnn_models import NORM_CHOICES, READOUT_CHOICES
+    ap.add_argument("--norm", choices=NORM_CHOICES, default="none",
+                    help="normalization after each GINEConv: 'layer' = LayerNorm "
+                         "before the ReLU. Applies to every arm. Default: none, as before.")
+    ap.add_argument("--readout", choices=READOUT_CHOICES, default="add-mean-max",
+                    help="graph pooling: 'mean-max' drops the add pool, which on this "
+                         "fixed-size graph is num_nodes x the mean pool. Applies to "
+                         "every arm. Default: add-mean-max, as before.")
     args = ap.parse_args()
     if args.extra_train_seed is not None and args.train_shots is None:
         ap.error("--extra-train-seed only applies with --train-shots")
@@ -766,7 +785,8 @@ def main():
             kind, args.d, args.p, args.shots, args.split_seed,
             args.seeds, args.lambdas, args.epochs, args.device,
             aux_data_qubits_only=args.aux_data_qubits_only,
-            aux_class_weight=args.aux_class_weight, **data_args)
+            aux_class_weight=args.aux_class_weight, **data_args,
+            norm=args.norm, readout=args.readout)
         results["arms"][kind] = summary
         correctness[kind] = test_correct
         truths[kind] = test_truth
