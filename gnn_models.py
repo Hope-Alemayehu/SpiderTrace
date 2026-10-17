@@ -293,8 +293,10 @@ def train_model(model, train_loader, val_loader, config: Dict):
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
+    # best_epoch: 1-based epoch whose weights best_state holds (0 = the initial
+    # weights, if no epoch ever improved on inf). Recorded only, never used.
     history = {"train_loss": [], "val_loss": [], "val_recall": [],
-               "val_precision": [], "val_logical_error_rate": []}
+               "val_precision": [], "val_logical_error_rate": [], "best_epoch": 0}
     best_val = float("inf")
     best_state = copy.deepcopy(model.state_dict())
     epochs_no_improve = 0
@@ -337,6 +339,7 @@ def train_model(model, train_loader, val_loader, config: Dict):
         if val_loss < best_val - 1e-5:
             best_val = val_loss
             best_state = copy.deepcopy(model.state_dict())
+            history["best_epoch"] = epoch + 1
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1

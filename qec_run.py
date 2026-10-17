@@ -29,6 +29,7 @@ import platform
 import socket
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -198,7 +199,84 @@ def _model_type(model):
     return "Raw" if model.aux_key == "raw_target" else "ZX"
 
 
-def make_datasets(d, p, shots, split_seed, val_frac=0.15, test_frac=0.15):
+def make_datasets(d, p, shots, split_seed, val_frac=0.15, test_frac=0.15,
+                  train_shots=None, extra_train_seed=None):
+    """Train / val / test datasets for one (d, p), optionally with a resized train split.
+
+    With train_shots=None this is exactly the base split below: `shots` draws from
+    the sampler seeded with split_seed, permuted by split_seed.
+
+    With train_shots=N, val and test are the base val and test objects themselves,
+    so they are identical to the default run's. Only train changes, and the train
+    sets are nested across N:
+      * N <= base train size: the first N base train shots.
+      * N >  base train size: all base train shots, then N - base extra shots from
+        a second sampler seeded with extra_train_seed (default split_seed + 1).
+        The extra shots come in fixed-size chunks (_extra_train_shots), so a smaller
+        N's extras are an exact prefix of a larger N's.
+    extra_train_seed must differ from split_seed: the same seed would redraw the
+    base pool, test shots included, into train.
+    """
+    base = _make_base_datasets(d, p, shots, split_seed, val_frac, test_frac)
+    if train_shots is None:
+        return base
+    if train_shots < 1:
+        raise ValueError(f"train_shots must be >= 1, got {train_shots}")
+    extra_seed = resolve_extra_train_seed(split_seed, extra_train_seed)
+    if extra_seed == split_seed:
+        raise ValueError(
+            f"extra_train_seed ({extra_seed}) equals split_seed: the extra train shots "
+            "would repeat the base pool, test shots included.")
+
+    key = (d, p, shots, split_seed, val_frac, test_frac, train_shots, extra_seed)
+    if key in _DATASET_CACHE:
+        return _DATASET_CACHE[key]
+    train_base, val_ds, test_ds = base
+    if train_shots <= len(train_base):
+        train_ds = train_base[:train_shots]
+    else:
+        train_ds = train_base + _extra_train_shots(
+            d, p, train_shots - len(train_base), extra_seed)
+    out = (train_ds, val_ds, test_ds)
+    _DATASET_CACHE[key] = out
+    return out
+
+
+def resolve_extra_train_seed(split_seed, extra_train_seed):
+    """The sampler seed for extra train shots: split_seed + 1 unless given."""
+    return split_seed + 1 if extra_train_seed is None else extra_train_seed
+
+
+# Extra train shots are drawn from ONE seeded sampler in sample() calls of this
+# fixed size. The sampler's output depends only on its seed and the sequence of
+# call sizes, so drawing n extras is an exact prefix of drawing more than n.
+_EXTRA_TRAIN_CHUNK = 10000
+
+
+def _extra_train_shots(d, p, n, seed):
+    """n training shots from a sampler seeded with `seed`, as PyG Data objects.
+
+    Same circuit, fault tables and DEM construction as _make_base_datasets, so
+    the shots come from the same distribution with the same graph and targets.
+    """
+    from qec_zx_dataset import (
+        build_circuit, build_fault_tables, sample_tuples, to_pyg_list,
+    )
+    circ = build_circuit(d, p)
+    tables, _unseeded = build_fault_tables(circ)
+    dem = circ.detector_error_model(decompose_errors=False, flatten_loops=True)
+    assert dem.num_errors == tables.num_errors, (
+        "DEM error-column alignment broken: reseeded sampler does not match "
+        f"fault tables ({dem.num_errors} vs {tables.num_errors})."
+    )
+    sampler = dem.compile_sampler(seed=seed)
+    out = []
+    while len(out) < n:
+        out.extend(to_pyg_list(sample_tuples(circ, tables, sampler, _EXTRA_TRAIN_CHUNK)))
+    return out[:n]
+
+
+def _make_base_datasets(d, p, shots, split_seed, val_frac=0.15, test_frac=0.15):
     """Build train / val / test datasets for one (d, p).
 
     CONTRACT:
@@ -296,7 +374,9 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
         reproducible from (seed, config) alone.
       * Early-stop / checkpoint-select on VAL only. Never touch test here.
       * For kind "A", lambda_aux is ignored (no aux head).
-      * Returns the trained model (best-val checkpoint restored).
+      * Returns (model, train_info): the trained model (best-val checkpoint
+        restored) and a record of the run for the JSON: epochs run, the epoch
+        whose weights were restored, wall time, and the per-epoch loss curves.
 
     Real signature is train_model(model, train_loader, val_loader, config: Dict)
     returning (history, best_state) -- a config dict, not kwargs, and no `device`
@@ -327,9 +407,19 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
         # None -> unweighted aux CE, i.e. the original behaviour.
         "aux_class_weight": aux_class_weight,
     }
+    t0 = time.perf_counter()
     history, best_state = train_model(model, train_loader, val_loader, config)
+    wall_time_s = time.perf_counter() - t0
     model.load_state_dict(best_state)
-    return model
+    train_info = {
+        "epochs_run": len(history["val_loss"]),
+        "best_epoch": history["best_epoch"],   # 1-based; 0 = initial weights
+        "wall_time_s": wall_time_s,            # train_model only, not eval
+        "n_train": len(train_ds),
+        "val_loss": history["val_loss"],
+        "train_loss": history["train_loss"],
+    }
+    return model, train_info
 
 
 def predict_flips(model, dataset, device):
@@ -464,7 +554,8 @@ def provenance(config):
 
 
 def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
-            aux_data_qubits_only=False, aux_class_weight="none"):
+            aux_data_qubits_only=False, aux_class_weight="none",
+            train_shots=None, extra_train_seed=None):
     """Run one arm across all seeds, sweeping lambda per seed (Option A) and
     selecting best-by-validation. Returns the full grid plus the selected-lambda
     test results, and keeps the per-example correctness mask on the shared test set
@@ -472,7 +563,11 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
 
     aux_data_qubits_only / aux_class_weight apply IDENTICALLY to Raw and ZX (only
     their target field differs) and are no-ops for GNN-A, which has no aux head.
-    Their defaults reproduce the original behaviour exactly."""
+    Their defaults reproduce the original behaviour exactly.
+
+    train_shots / extra_train_seed resize the train split only (see
+    make_datasets); None keeps the base split."""
+    data_args = dict(train_shots=train_shots, extra_train_seed=extra_train_seed)
     # GNN-A has no aux head: its lambda grid is a single no-op point.
     arm_lambdas = [0.0] if kind == "A" else list(lambdas)
 
@@ -490,7 +585,7 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     # each arm's own data, which is the fairness that matters here.
     aux_weights = aux_freq = None
     if kind != "A" and aux_class_weight != "none":
-        train_ds0, _, _ = make_datasets(d, p, shots, split_seed)
+        train_ds0, _, _ = make_datasets(d, p, shots, split_seed, **data_args)
         aux_weights, aux_freq = compute_aux_class_weights(
             train_ds0, AUX_KEY[kind], num_qubits, aux_qubits,
             scheme=aux_class_weight)
@@ -500,7 +595,7 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
 
     for seed in model_seeds:
         # Split is fixed by split_seed, so the test set is identical across arms & seeds.
-        train_ds, val_ds, test_ds = make_datasets(d, p, shots, split_seed)
+        train_ds, val_ds, test_ds = make_datasets(d, p, shots, split_seed, **data_args)
 
         best = None  # (val_ler, lambda, test_ler, correct_mask, y_true, aux)
         for lam in arm_lambdas:
@@ -511,9 +606,9 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             # start, so the RNG state entering the data loaders is unchanged.
             _seed_all(seed)
             model = build_model(kind, d=d, aux_qubits=aux_qubits)
-            model = train(model, train_ds, val_ds, lambda_aux=lam,
-                          epochs=epochs, seed=seed, device=device,
-                          aux_class_weight=aux_weights)
+            model, train_info = train(model, train_ds, val_ds, lambda_aux=lam,
+                                      epochs=epochs, seed=seed, device=device,
+                                      aux_class_weight=aux_weights)
 
             # Selection metric: LER on VAL. Reported metric: LER on TEST.
             vp, vt = predict_flips(model, val_ds, device)
@@ -522,7 +617,8 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             test_ler = logical_error_rate(tp, tt)
 
             grid.append({"seed": seed, "lambda": lam,
-                         "val_ler": val_ler, "test_ler": test_ler})
+                         "val_ler": val_ler, "test_ler": test_ler,
+                         "train": train_info})
 
             if best is None or val_ler < best[0]:
                 # Aux diagnostics on TEST for this lambda: reporting only, never
@@ -531,9 +627,13 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
                 best = (val_ler, lam, test_ler, (tp == tt), tt, aux)
 
         val_ler, lam, test_ler, correct_mask, y_true, aux = best
+        # test_wrong_idx: positions in the shared test split that this model got
+        # wrong. Lets runs in separate processes (e.g. different train sizes) be
+        # compared with a paired McNemar later.
         selected.append({"seed": seed, "selected_lambda": lam,
                          "val_ler": val_ler, "test_ler": test_ler,
-                         "aux": aux})
+                         "aux": aux,
+                         "test_wrong_idx": np.flatnonzero(~correct_mask).tolist()})
         test_correct[seed] = correct_mask
         test_truth[seed] = y_true
 
@@ -596,21 +696,77 @@ def main():
                          "from the TRAINING split only. 'inv-freq' stops the head "
                          "collapsing to predicting identity everywhere. "
                          "Default: none (unweighted, as before).")
+    # ---- run-shape options. Defaults reproduce the ORIGINAL behaviour exactly. ----
+    ap.add_argument("--arms", nargs="+", choices=["A", "Raw", "ZX"],
+                    default=["A", "Raw", "ZX"],
+                    help="which arms to train. McNemar tests run only for the pairs "
+                         "present. Default: all three, as before.")
+    ap.add_argument("--train-shots", type=int, default=None,
+                    help="resize the TRAIN split to this many shots; val and test "
+                         "stay the --shots / --split-seed split, unchanged. Up to the "
+                         "base train size it takes the first N base train shots; "
+                         "beyond it, adds fresh shots from --extra-train-seed. Train "
+                         "sets are nested across N. Default: the base split, as before.")
+    ap.add_argument("--extra-train-seed", type=int, default=None,
+                    help="sampler seed for train shots beyond the base split. Must "
+                         "differ from --split-seed. Default: split seed + 1.")
+    ap.add_argument("--expect-mwpm-errors", type=int, default=None,
+                    help="stop before training unless MWPM makes exactly this many "
+                         "errors on the test split: a fingerprint that the test set "
+                         "is the expected one. Default: no check.")
     args = ap.parse_args()
+    if args.extra_train_seed is not None and args.train_shots is None:
+        ap.error("--extra-train-seed only applies with --train-shots")
+    arms = [k for k in ("A", "Raw", "ZX") if k in args.arms]   # canonical order
+    data_args = dict(train_shots=args.train_shots,
+                     extra_train_seed=args.extra_train_seed)
 
     config = vars(args).copy()
     prov = provenance(config)
 
-    results = {"provenance": prov, "arms": {}, "mcnemar_zx_vs_raw": {}}
+    results = {"provenance": prov, "arms": {}}
+
+    # MWPM on the SAME test shots as the GNNs. No training, no seeds: computed once,
+    # BEFORE training so a wrong test set (--expect-mwpm-errors) fails fast. It uses
+    # no torch or numpy global RNG, and every model is seeded right before it is
+    # built, so running it first does not change any GNN result.
+    train_ds, val_ds, test_ds = make_datasets(args.d, args.p, args.shots,
+                                              args.split_seed, **data_args)
+    mwpm_ler, mwpm_correct, mwpm_truth = mwpm_on_test(args.d, args.p, test_ds)
+    mwpm_wrong = np.flatnonzero(~mwpm_correct)
+    results["mwpm"] = {"test_ler": mwpm_ler, "n_test": len(test_ds),
+                       "n_errors": int(mwpm_wrong.size),
+                       "test_wrong_idx": mwpm_wrong.tolist()}
+    print(f"[MWPM] test LER = {mwpm_ler:.4f} ({mwpm_wrong.size} errors) on "
+          f"{len(test_ds)} test shots")
+    if (args.expect_mwpm_errors is not None
+            and mwpm_wrong.size != args.expect_mwpm_errors):
+        raise RuntimeError(
+            f"MWPM made {mwpm_wrong.size} errors on the test split, expected "
+            f"{args.expect_mwpm_errors}. This is not the expected test set (seeded "
+            "stim sampling can differ between machines). Stopping before training.")
+
+    n_base_train = len(make_datasets(args.d, args.p, args.shots, args.split_seed)[0])
+    results["splits"] = {
+        "n_train": len(train_ds), "n_val": len(val_ds), "n_test": len(test_ds),
+        "n_train_base": min(len(train_ds), n_base_train),
+        "n_train_extra": max(0, len(train_ds) - n_base_train),
+        "extra_train_seed": (None if args.train_shots is None else
+                             resolve_extra_train_seed(args.split_seed,
+                                                      args.extra_train_seed)),
+    }
+    print(f"[splits] train {len(train_ds)} (base {results['splits']['n_train_base']}"
+          f" + extra {results['splits']['n_train_extra']}), val {len(val_ds)}, "
+          f"test {len(test_ds)}")
 
     correctness = {}  # arm -> {seed -> mask}
     truths = {}       # arm -> {seed -> y_true}
-    for kind in ("A", "Raw", "ZX"):
+    for kind in arms:
         summary, test_correct, test_truth = run_arm(
             kind, args.d, args.p, args.shots, args.split_seed,
             args.seeds, args.lambdas, args.epochs, args.device,
             aux_data_qubits_only=args.aux_data_qubits_only,
-            aux_class_weight=args.aux_class_weight)
+            aux_class_weight=args.aux_class_weight, **data_args)
         results["arms"][kind] = summary
         correctness[kind] = test_correct
         truths[kind] = test_truth
@@ -623,38 +779,32 @@ def main():
                   f"{aux0['frac_pred_identity']:.3f} of {aux0['aux_slots']} slots"
                   f"  -> {'COLLAPSED' if aux0['collapsed_to_identity'] else 'alive'}")
 
-    # Sanity: Raw and ZX must have seen the identical test set for McNemar to be valid.
-    for seed in args.seeds:
-        if not np.array_equal(truths["ZX"][seed], truths["Raw"][seed]):
-            raise RuntimeError(
-                f"Test sets differ between ZX and Raw at seed {seed}. "
-                "The split is not independent of model seed -- McNemar would be invalid.")
-    
-    # MWPM on the SAME test shots as the GNNs. No training, no seeds: computed once.
-    _, _, test_ds = make_datasets(args.d, args.p, args.shots, args.split_seed)
-    mwpm_ler, mwpm_correct, mwpm_truth = mwpm_on_test(args.d, args.p, test_ds)
-    if not np.array_equal(mwpm_truth, truths["ZX"][args.seeds[0]]):
-        raise RuntimeError("MWPM saw a different test set than the GNNs.")
-    results["mwpm"] = {"test_ler": mwpm_ler, "n_test": len(test_ds)}
-    print(f"[MWPM] test LER = {mwpm_ler:.4f} on the same {len(test_ds)} test shots")
-    
-    # McNemar per seed on the shared test set (primary = first seed).
-    for seed in args.seeds:
-        results["mcnemar_zx_vs_raw"][str(seed)] = mcnemar(
-            correctness["ZX"][seed], correctness["Raw"][seed])
-    primary = str(args.seeds[0])
-    results["mcnemar_zx_vs_raw"]["_primary_seed"] = primary
-    print(f"[McNemar ZX vs Raw, seed {primary}] "
-          f"p = {results['mcnemar_zx_vs_raw'][primary]['p_value']:.4g}")
+    # Sanity: every arm, at every seed, must have seen MWPM's test set (hence each
+    # other's) for the paired McNemar tests to be valid.
+    for kind in arms:
+        for seed in args.seeds:
+            if not np.array_equal(truths[kind][seed], mwpm_truth):
+                raise RuntimeError(
+                    f"Test set of {kind} at seed {seed} differs from MWPM's. The split "
+                    "is not independent of model seed -- McNemar would be invalid.")
 
-    # McNemar ZX vs MWPM on the same test shots (a = ZX, b = MWPM).
-    results["mcnemar_zx_vs_mwpm"] = {}
-    for seed in args.seeds:
-        results["mcnemar_zx_vs_mwpm"][str(seed)] = mcnemar(
-            correctness["ZX"][seed], mwpm_correct)
-    results["mcnemar_zx_vs_mwpm"]["_primary_seed"] = primary
-    print(f"[McNemar ZX vs MWPM, seed {primary}] "
-          f"p = {results['mcnemar_zx_vs_mwpm'][primary]['p_value']:.4g}")
+    # McNemar per seed on the shared test set (primary = first seed), for each
+    # pair whose arms were run. b = None means MWPM.
+    primary = str(args.seeds[0])
+    pairs = [("mcnemar_zx_vs_raw", "ZX", "Raw"),
+             ("mcnemar_zx_vs_mwpm", "ZX", None),
+             ("mcnemar_a_vs_mwpm", "A", None)]
+    for key, a, b in pairs:
+        if a not in arms or (b is not None and b not in arms):
+            continue
+        results[key] = {}
+        for seed in args.seeds:
+            results[key][str(seed)] = mcnemar(
+                correctness[a][seed],
+                mwpm_correct if b is None else correctness[b][seed])
+        results[key]["_primary_seed"] = primary
+        print(f"[McNemar {a} vs {b or 'MWPM'}, seed {primary}] "
+              f"p = {results[key][primary]['p_value']:.4g}")
 
     # Write ONE timestamped, provenance-carrying artifact. Never overwrites.
     outdir = Path(args.outdir)

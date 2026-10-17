@@ -177,6 +177,10 @@ python validate_dem_graph.py                     # GNN-A on DEM graph, 4 vs 8 la
   - It writes a timestamped JSON with provenance: git commit, dirty flag, config and library versions.
   - It computes MWPM on the same test split and runs a paired McNemar test of ZX vs MWPM.
   - `--aux-data-qubits-only` restricts the aux target to the d² data qubits. `--aux-class-weight inv-freq` weights the aux CE loss by inverse Pauli frequency. Both flags apply identically to Raw and ZX, and the run also records aux diagnostics: per-class recall and a confusion matrix.
+  - `--arms` trains a subset of the arms (default: all three). McNemar tests run only for the pairs present, and with `A` the run adds A vs MWPM.
+  - `--train-shots N` resizes only the train split; val and test stay the `--shots` / `--split-seed` split. Up to the base train size it takes the first N base train shots. Beyond that, it adds fresh shots from a sampler seeded with `--extra-train-seed` (default: split seed + 1). Train sets are nested across N.
+  - `--expect-mwpm-errors K` stops the run before training unless MWPM makes exactly K errors on the test split, as a fingerprint of the test set.
+  - Each model's JSON entry records epochs run, the best (restored) epoch, wall time and the per-epoch train and val loss. Each arm and seed, and MWPM, record the indices of the test shots they got wrong, so runs in separate processes can be compared with a paired McNemar test.
 
 ### Current results
 
@@ -254,6 +258,7 @@ SpiderTrace/
 - `pyproject.toml` declares the console scripts `spidertrace-test` and `spidertrace-custom` pointing at `spidertrace.test_simple` / `spidertrace.test_custom`. Those modules live in `tests/`, so both scripts are broken.
 - `qec_zx_dataset.build_fault_tables` compiles its DEM sampler without a seed, and the `seed` argument of `sample_tuples` is unused. As a result, `gnn_models.build_loaders` does not produce reproducible datasets. `qec_run.py` works around this by compiling a seeded sampler itself.
 - Results in `qec_run.py` JSONs written before commit 20758be (all d=3 runs and `run_20260924T131514Z`) used unseeded model initialisation, so re-running them will not reproduce the exact numbers.
+- The fixed test split is reproducible only on the machines that made it. With the same stim (1.16.0) and `--split-seed 12345`, Colab and Kaggle draw the same shots (d=5, p=0.003: MWPM 36 errors in 7,500), but a local Windows PC draws different ones (20 errors). Run comparable experiments in the cloud and pass `--expect-mwpm-errors 36` at d=5, p=0.003.
 - The kNN-vs-DEM-graph comparison is confounded by the sampler: balanced for kNN, natural for DEM.
 - Early stopping is on validation loss, which for Raw/ZX includes the `λ·aux` term. The stopping criterion therefore varies with λ.
 
