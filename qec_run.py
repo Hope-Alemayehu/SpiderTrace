@@ -212,7 +212,7 @@ def make_datasets(d, p, shots, split_seed, val_frac=0.15, test_frac=0.15,
       * N <= base train size: the first N base train shots.
       * N >  base train size: all base train shots, then N - base extra shots from
         a second sampler seeded with extra_train_seed (default split_seed + 1).
-        The extra shots come in fixed-size chunks (_extra_train_shots), so a smaller
+        The extra shots come in fixed-size chunks (_fresh_shots), so a smaller
         N's extras are an exact prefix of a larger N's.
     extra_train_seed must differ from split_seed: the same seed would redraw the
     base pool, test shots included, into train.
@@ -235,7 +235,7 @@ def make_datasets(d, p, shots, split_seed, val_frac=0.15, test_frac=0.15,
     if train_shots <= len(train_base):
         train_ds = train_base[:train_shots]
     else:
-        train_ds = train_base + _extra_train_shots(
+        train_ds = train_base + _fresh_shots(
             d, p, train_shots - len(train_base), extra_seed)
     out = (train_ds, val_ds, test_ds)
     _DATASET_CACHE[key] = out
@@ -247,14 +247,20 @@ def resolve_extra_train_seed(split_seed, extra_train_seed):
     return split_seed + 1 if extra_train_seed is None else extra_train_seed
 
 
-# Extra train shots are drawn from ONE seeded sampler in sample() calls of this
-# fixed size. The sampler's output depends only on its seed and the sequence of
-# call sizes, so drawing n extras is an exact prefix of drawing more than n.
-_EXTRA_TRAIN_CHUNK = 10000
+def resolve_big_test_seed(split_seed, big_test_seed):
+    """The sampler seed for the big test set: split_seed + 2 unless given."""
+    return split_seed + 2 if big_test_seed is None else big_test_seed
 
 
-def _extra_train_shots(d, p, n, seed):
-    """n training shots from a sampler seeded with `seed`, as PyG Data objects.
+# Fresh shots (extra train shots, the big test set) are drawn from ONE seeded
+# sampler in sample() calls of this fixed size. The sampler's output depends only
+# on its seed and the sequence of call sizes, so drawing n shots is an exact prefix
+# of drawing more than n.
+_FRESH_SHOT_CHUNK = 10000
+
+
+def _fresh_shots(d, p, n, seed):
+    """n shots from a sampler seeded with `seed`, as PyG Data objects.
 
     Same circuit, fault tables and DEM construction as _make_base_datasets, so
     the shots come from the same distribution with the same graph and targets.
@@ -272,7 +278,7 @@ def _extra_train_shots(d, p, n, seed):
     sampler = dem.compile_sampler(seed=seed)
     out = []
     while len(out) < n:
-        out.extend(to_pyg_list(sample_tuples(circ, tables, sampler, _EXTRA_TRAIN_CHUNK)))
+        out.extend(to_pyg_list(sample_tuples(circ, tables, sampler, _FRESH_SHOT_CHUNK)))
     return out[:n]
 
 
@@ -368,7 +374,7 @@ def _seed_all(seed):
 
 
 def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
-          aux_class_weight=None):
+          aux_class_weight=None, checkpoint=None, ckpt_key=None):
     """Train one model with early stopping on the VALIDATION split.
 
     CONTRACT:
@@ -379,6 +385,10 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
       * Returns (model, train_info): the trained model (best-val checkpoint
         restored) and a record of the run for the JSON: epochs run, the epoch
         whose weights were restored, wall time, and the per-epoch loss curves.
+      * With a RunCheckpoint, the training state is saved after every epoch
+        under `ckpt_key`. A model that already finished is loaded instead of
+        retrained, and an interrupted one continues after its last saved epoch.
+        wall_time_s then sums the time spent in every process.
 
     Real signature is train_model(model, train_loader, val_loader, config: Dict)
     returning (history, best_state) -- a config dict, not kwargs, and no `device`
@@ -396,6 +406,14 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
     # train_model does `device = next(model.parameters()).device` -- move first.
     model = model.to(device)
 
+    if checkpoint is not None:
+        done = checkpoint.load_done(ckpt_key)
+        if done is not None:
+            model.load_state_dict(done["best_state"])
+            print(f"  [{_model_type(model):>3}] {ckpt_key} finished before the resume: "
+                  "loaded its weights from the checkpoint")
+            return model, done["train_info"]
+
     train_loader = DataLoader(train_ds, batch_size=hparam_batch_size(), shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=hparam_batch_size(), shuffle=False)
 
@@ -410,8 +428,18 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
         "aux_class_weight": aux_class_weight,
     }
     t0 = time.perf_counter()
+    prior_s = 0.0          # training time spent in earlier processes (resume)
+    resumed_after = None
+    if checkpoint is not None:
+        state = checkpoint.load_progress(ckpt_key)
+        if state is not None:
+            config["resume_state"] = state
+            prior_s = state["elapsed_s"]
+            resumed_after = state["epoch"]
+        config["on_epoch_end"] = lambda st: checkpoint.save_progress(
+            ckpt_key, st, prior_s + time.perf_counter() - t0)
     history, best_state = train_model(model, train_loader, val_loader, config)
-    wall_time_s = time.perf_counter() - t0
+    wall_time_s = prior_s + time.perf_counter() - t0
     model.load_state_dict(best_state)
     train_info = {
         "epochs_run": len(history["val_loss"]),
@@ -421,6 +449,10 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
         "val_loss": history["val_loss"],
         "train_loss": history["train_loss"],
     }
+    if resumed_after is not None:
+        train_info["resumed_after_epoch"] = resumed_after
+    if checkpoint is not None:
+        checkpoint.save_done(ckpt_key, best_state, train_info)
     return model, train_info
 
 
@@ -555,10 +587,146 @@ def provenance(config):
     }
 
 
+# --------------------------------------------------------------------------------------
+# Per-epoch checkpointing. Every run saves its training state to
+# <outdir>/checkpoint_<tag>/ after each epoch, so a crash loses at most the epoch in
+# progress, and `--resume` continues from there. The directory is deleted once the
+# final JSON is written, so a run that finishes leaves the same files as before.
+#
+# Contents of the directory:
+#   partial.json      provenance at start, config, resumes, finished models (training
+#                     record and val/test LER) and the model in progress (its curves)
+#   progress_<key>.pt full training state of the model in progress (see
+#                     gnn_models._training_state), rewritten after every epoch
+#   done_<key>.pt     best weights and training record of each finished model
+# <key> names one model: arm, model seed and lambda.
+# --------------------------------------------------------------------------------------
+# Config keys allowed to differ between a run and its resume.
+_RESUME_FREE_KEYS = ("resume", "device", "outdir")
+
+
+def checkpoint_tag(config):
+    """Short hash of every config value that determines the run's results."""
+    import hashlib
+    key = {k: v for k, v in config.items() if k not in _RESUME_FREE_KEYS}
+    return hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def _replace_atomically(path, write):
+    """write(tmp_path), then rename over `path`: a crash mid-write never leaves a
+    truncated checkpoint, only the previous complete one."""
+    import os
+    tmp = path.with_name(path.name + ".tmp")
+    write(tmp)
+    os.replace(tmp, path)
+
+
+class RunCheckpoint:
+    def __init__(self, outdir, config, prov, resume):
+        tag = checkpoint_tag(config)
+        self.dir = Path(outdir) / f"checkpoint_{tag}"
+        self.partial_path = self.dir / "partial.json"
+        if resume:
+            if not self.partial_path.exists():
+                raise RuntimeError(
+                    f"--resume: no checkpoint for this configuration at {self.dir}. "
+                    "A resume must repeat the original command (only --device and "
+                    "--outdir may change).")
+            self.partial = json.loads(self.partial_path.read_text())
+            start = self.partial["provenance_at_start"]["git_commit"]
+            if start and prov["git_commit"] and start != prov["git_commit"]:
+                raise RuntimeError(
+                    f"--resume: the checkpoint was written at commit {start}, this "
+                    f"process runs {prov['git_commit']}. Check out {start} to resume.")
+            if not (start and prov["git_commit"]):
+                print("WARNING: git commit unknown at the start or at this resume; "
+                      "cannot check that the code is unchanged.")
+            self.partial["resumes"].append({
+                "timestamp_utc": prov["timestamp_utc"],
+                "git_commit": prov["git_commit"], "git_dirty": prov["git_dirty"],
+                "hostname": prov["hostname"]})
+            print(f"[checkpoint] resuming from {self.dir} "
+                  f"({len(self.partial['done'])} models finished)")
+        else:
+            if self.dir.exists():
+                raise RuntimeError(
+                    f"A checkpoint for this configuration already exists at {self.dir}. "
+                    "Pass --resume to continue it, or delete the directory to start over.")
+            self.dir.mkdir(parents=True)
+            self.partial = {
+                "status": "in progress: partial results, not a finished run",
+                "tag": tag,
+                "config": {k: v for k, v in config.items() if k not in _RESUME_FREE_KEYS},
+                "provenance_at_start": prov, "resumes": [],
+                "done": {}, "in_progress": None}
+        self._write_partial()
+
+    @staticmethod
+    def model_key(kind, seed, lam):
+        return f"{kind}_seed{seed}_lam{lam}"
+
+    def _write_partial(self):
+        text = json.dumps(self.partial, indent=2)
+        _replace_atomically(self.partial_path, lambda p: p.write_text(text))
+
+    def _save_pt(self, name, obj):
+        import torch
+        _replace_atomically(self.dir / name, lambda p: torch.save(obj, p))
+
+    def _load_pt(self, name):
+        import torch
+        path = self.dir / name
+        if not path.exists():
+            return None
+        # weights_only=False: the state holds the numpy RNG state and the history.
+        return torch.load(path, map_location="cpu", weights_only=False)
+
+    def load_done(self, key):
+        return self._load_pt(f"done_{key}.pt")
+
+    def load_progress(self, key):
+        return self._load_pt(f"progress_{key}.pt")
+
+    def save_progress(self, key, state, elapsed_s):
+        self._save_pt(f"progress_{key}.pt", {**state, "elapsed_s": elapsed_s})
+        h = state["history"]
+        self.partial["in_progress"] = {
+            "model": key, "epochs_done": state["epoch"],
+            "best_epoch": h["best_epoch"], "elapsed_s": elapsed_s,
+            "train_loss": h["train_loss"], "val_loss": h["val_loss"]}
+        self._write_partial()
+
+    def save_done(self, key, best_state, train_info):
+        self._save_pt(f"done_{key}.pt", {"best_state": best_state,
+                                         "train_info": train_info})
+        (self.dir / f"progress_{key}.pt").unlink(missing_ok=True)
+        self.partial["done"][key] = {"train": train_info}
+        self.partial["in_progress"] = None
+        self._write_partial()
+
+    def record_eval(self, key, train_info, val_ler, test_ler):
+        # Rebuilt in full: robust to a crash between save_done's two writes.
+        self.partial["done"][key] = {"train": train_info, "val_ler": val_ler,
+                                     "test_ler": test_ler}
+        self._write_partial()
+
+    def resume_record(self):
+        """For the final JSON: None unless this run was resumed."""
+        if not self.partial["resumes"]:
+            return None
+        return {"tag": self.partial["tag"],
+                "provenance_at_start": self.partial["provenance_at_start"],
+                "resumes": self.partial["resumes"]}
+
+    def finish(self):
+        import shutil
+        shutil.rmtree(self.dir)
+
+
 def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             aux_data_qubits_only=False, aux_class_weight="none",
             train_shots=None, extra_train_seed=None,
-            norm="none", readout="add-mean-max"):
+            norm="none", readout="add-mean-max", checkpoint=None, big_test_ds=None):
     """Run one arm across all seeds, sweeping lambda per seed (Option A) and
     selecting best-by-validation. Returns the full grid plus the selected-lambda
     test results, and keeps the per-example correctness mask on the shared test set
@@ -572,7 +740,14 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     make_datasets); None keeps the base split.
 
     norm / readout configure the shared backbone (gnn_models.GNNBackbone) and
-    apply IDENTICALLY to every arm. Their defaults are the original backbone."""
+    apply IDENTICALLY to every arm. Their defaults are the original backbone.
+
+    checkpoint: a RunCheckpoint, passed through to train(). big_test_ds: optional
+    extra test set; each seed's SELECTED model is also scored on it. Selection
+    never looks at it.
+
+    Returns (summary, test_correct, test_truth, big), where big maps each seed to
+    (correct_mask, y_true, eval_time_s) on big_test_ds ({} without one)."""
     data_args = dict(train_shots=train_shots, extra_train_seed=extra_train_seed)
     model_args = dict(norm=norm, readout=readout)
     # GNN-A has no aux head: its lambda grid is a single no-op point.
@@ -582,6 +757,7 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     selected = []        # per seed: the best-by-val lambda and its TEST ler
     test_correct = {}    # seed -> boolean per-example correctness on shared test set
     test_truth = {}      # seed -> y_true on shared test set (sanity: identical across arms)
+    big = {}             # seed -> (correct_mask, y_true, eval_time_s) on big_test_ds
 
     num_qubits = _num_qubits_for(d)
     aux_qubits = _data_qubits_for(d) if aux_data_qubits_only else None
@@ -604,7 +780,7 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
         # Split is fixed by split_seed, so the test set is identical across arms & seeds.
         train_ds, val_ds, test_ds = make_datasets(d, p, shots, split_seed, **data_args)
 
-        best = None  # (val_ler, lambda, test_ler, correct_mask, y_true, aux)
+        best = None  # (val_ler, lambda, test_ler, correct_mask, y_true, aux, model)
         for lam in arm_lambdas:
             # Seed BEFORE building the model so `seed` controls the initial
             # weights too. Previously the model was constructed from whatever
@@ -614,15 +790,19 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             _seed_all(seed)
             model = build_model(kind, d=d, aux_qubits=aux_qubits, **model_args)
             n_params = sum(t.numel() for t in model.parameters())
+            key = RunCheckpoint.model_key(kind, seed, lam)
             model, train_info = train(model, train_ds, val_ds, lambda_aux=lam,
                                       epochs=epochs, seed=seed, device=device,
-                                      aux_class_weight=aux_weights)
+                                      aux_class_weight=aux_weights,
+                                      checkpoint=checkpoint, ckpt_key=key)
 
             # Selection metric: LER on VAL. Reported metric: LER on TEST.
             vp, vt = predict_flips(model, val_ds, device)
             val_ler = logical_error_rate(vp, vt)
             tp, tt = predict_flips(model, test_ds, device)
             test_ler = logical_error_rate(tp, tt)
+            if checkpoint is not None:
+                checkpoint.record_eval(key, train_info, val_ler, test_ler)
 
             grid.append({"seed": seed, "lambda": lam,
                          "val_ler": val_ler, "test_ler": test_ler,
@@ -632,9 +812,13 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
                 # Aux diagnostics on TEST for this lambda: reporting only, never
                 # used for selection (selection above is val LER).
                 aux = aux_diagnostics(model, test_ds, device, num_qubits)
-                best = (val_ler, lam, test_ler, (tp == tt), tt, aux)
+                best = (val_ler, lam, test_ler, (tp == tt), tt, aux, model)
 
-        val_ler, lam, test_ler, correct_mask, y_true, aux = best
+        val_ler, lam, test_ler, correct_mask, y_true, aux, best_model = best
+        if big_test_ds is not None:
+            t0 = time.perf_counter()
+            bp, bt = predict_flips(best_model, big_test_ds, device)
+            big[seed] = ((bp == bt), bt, time.perf_counter() - t0)
         # test_wrong_idx: positions in the shared test split that this model got
         # wrong. Lets runs in separate processes (e.g. different train sizes) be
         # compared with a paired McNemar later.
@@ -661,7 +845,32 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
         # backbone actually built for this arm (identical across seeds and lambdas)
         "model": {**model_args, "n_params": n_params},
     }
-    return summary, test_correct, test_truth
+    return summary, test_correct, test_truth, big
+
+# Paired McNemar tests reported per run: (results key, arm a, arm b), b = None = MWPM.
+_PAIRS = [("mcnemar_zx_vs_raw", "ZX", "Raw"),
+          ("mcnemar_zx_vs_mwpm", "ZX", None),
+          ("mcnemar_a_vs_mwpm", "A", None)]
+
+
+def paired_mcnemar(arms, seeds, correctness, mwpm_correct, label=""):
+    """McNemar per seed (primary = first seed) for each pair whose arms were run,
+    on one shared test set. correctness: arm -> {seed -> mask}."""
+    out = {}
+    primary = str(seeds[0])
+    for key, a, b in _PAIRS:
+        if a not in arms or (b is not None and b not in arms):
+            continue
+        out[key] = {}
+        for seed in seeds:
+            out[key][str(seed)] = mcnemar(
+                correctness[a][seed],
+                mwpm_correct if b is None else correctness[b][seed])
+        out[key]["_primary_seed"] = primary
+        print(f"[McNemar {a} vs {b or 'MWPM'}{label}, seed {primary}] "
+              f"p = {out[key][primary]['p_value']:.4g}")
+    return out
+
 
 def mwpm_on_test(d, p, test_ds):
     """Decode the shared test split with MWPM. Deterministic, so computed once per run."""
@@ -733,9 +942,34 @@ def main():
                     help="graph pooling: 'mean-max' drops the add pool, which on this "
                          "fixed-size graph is num_nodes x the mean pool. Applies to "
                          "every arm. Default: add-mean-max, as before.")
+    # ---- resume and extra evaluation. Defaults reproduce the ORIGINAL results. ----
+    ap.add_argument("--resume", action="store_true",
+                    help="continue an interrupted run from its per-epoch checkpoint "
+                         "in --outdir. Repeat the original command exactly (only "
+                         "--device and --outdir may change) and add --resume.")
+    ap.add_argument("--big-test-shots", type=int, default=None,
+                    help="also score each arm's selected model and MWPM on this many "
+                         "fresh test shots from --big-test-seed, reported under "
+                         "'big_test'. The 7,500-shot test split stays the primary one "
+                         "and is unchanged. Default: off.")
+    ap.add_argument("--big-test-seed", type=int, default=None,
+                    help="sampler seed for the big test set. Must differ from "
+                         "--split-seed and the extra-train seed. Default: split seed + 2.")
     args = ap.parse_args()
     if args.extra_train_seed is not None and args.train_shots is None:
         ap.error("--extra-train-seed only applies with --train-shots")
+    big_seed = None
+    if args.big_test_seed is not None and args.big_test_shots is None:
+        ap.error("--big-test-seed only applies with --big-test-shots")
+    if args.big_test_shots is not None:
+        if args.big_test_shots < 1:
+            ap.error("--big-test-shots must be >= 1")
+        big_seed = resolve_big_test_seed(args.split_seed, args.big_test_seed)
+        extra_seed = resolve_extra_train_seed(args.split_seed, args.extra_train_seed)
+        if big_seed in (args.split_seed, extra_seed):
+            ap.error(f"--big-test-seed {big_seed} must differ from the split seed "
+                     f"({args.split_seed}) and the extra-train seed ({extra_seed}): "
+                     "the big test set would repeat train or test shots.")
     arms = [k for k in ("A", "Raw", "ZX") if k in args.arms]   # canonical order
     data_args = dict(train_shots=args.train_shots,
                      extra_train_seed=args.extra_train_seed)
@@ -778,15 +1012,38 @@ def main():
           f" + extra {results['splits']['n_train_extra']}), val {len(val_ds)}, "
           f"test {len(test_ds)}")
 
+    # Big test set: fresh shots from their own sampler seed, never used for training,
+    # selection or early stopping. Built and decoded by MWPM before training, so a
+    # memory problem shows up before hours of training rather than after.
+    big_ds = None
+    if args.big_test_shots is not None:
+        t0 = time.perf_counter()
+        big_ds = _fresh_shots(args.d, args.p, args.big_test_shots, big_seed)
+        gen_s = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        big_mwpm_ler, big_mwpm_correct, big_mwpm_truth = mwpm_on_test(
+            args.d, args.p, big_ds)
+        big_mwpm_s = time.perf_counter() - t0
+        big_mwpm_wrong = np.flatnonzero(~big_mwpm_correct)
+        print(f"[big test] {len(big_ds)} shots from seed {big_seed}, built in "
+              f"{gen_s:.1f} s. MWPM LER = {big_mwpm_ler:.5f} "
+              f"({big_mwpm_wrong.size} errors), decoded in {big_mwpm_s:.1f} s")
+
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    checkpoint = RunCheckpoint(outdir, config, prov, args.resume)
+
     correctness = {}  # arm -> {seed -> mask}
     truths = {}       # arm -> {seed -> y_true}
+    big = {}          # arm -> {seed -> (mask, y_true, eval_time_s)} on the big test set
     for kind in arms:
-        summary, test_correct, test_truth = run_arm(
+        summary, test_correct, test_truth, big[kind] = run_arm(
             kind, args.d, args.p, args.shots, args.split_seed,
             args.seeds, args.lambdas, args.epochs, args.device,
             aux_data_qubits_only=args.aux_data_qubits_only,
             aux_class_weight=args.aux_class_weight, **data_args,
-            norm=args.norm, readout=args.readout)
+            norm=args.norm, readout=args.readout,
+            checkpoint=checkpoint, big_test_ds=big_ds)
         results["arms"][kind] = summary
         correctness[kind] = test_correct
         truths[kind] = test_truth
@@ -809,30 +1066,49 @@ def main():
                     "is not independent of model seed -- McNemar would be invalid.")
 
     # McNemar per seed on the shared test set (primary = first seed), for each
-    # pair whose arms were run. b = None means MWPM.
-    primary = str(args.seeds[0])
-    pairs = [("mcnemar_zx_vs_raw", "ZX", "Raw"),
-             ("mcnemar_zx_vs_mwpm", "ZX", None),
-             ("mcnemar_a_vs_mwpm", "A", None)]
-    for key, a, b in pairs:
-        if a not in arms or (b is not None and b not in arms):
-            continue
-        results[key] = {}
-        for seed in args.seeds:
-            results[key][str(seed)] = mcnemar(
-                correctness[a][seed],
-                mwpm_correct if b is None else correctness[b][seed])
-        results[key]["_primary_seed"] = primary
-        print(f"[McNemar {a} vs {b or 'MWPM'}, seed {primary}] "
-              f"p = {results[key][primary]['p_value']:.4g}")
+    # pair whose arms were run.
+    results.update(paired_mcnemar(arms, args.seeds, correctness, mwpm_correct))
+
+    # Big test set: secondary, reported separately; the primary results above are
+    # computed exactly as without it.
+    if big_ds is not None:
+        bt = {"n_test": len(big_ds), "seed": big_seed, "build_time_s": gen_s,
+              "mwpm": {"test_ler": big_mwpm_ler, "n_errors": int(big_mwpm_wrong.size),
+                       "test_wrong_idx": big_mwpm_wrong.tolist(),
+                       "decode_time_s": big_mwpm_s},
+              "arms": {}}
+        big_correct = {}
+        for kind in arms:
+            bt["arms"][kind] = {}
+            big_correct[kind] = {}
+            for seed in args.seeds:
+                mask, y_true, eval_s = big[kind][seed]
+                if not np.array_equal(y_true, big_mwpm_truth):
+                    raise RuntimeError(f"Big test set of {kind} at seed {seed} differs "
+                                       "from MWPM's.")
+                wrong = np.flatnonzero(~mask)
+                bt["arms"][kind][str(seed)] = {
+                    "test_ler": float(np.mean(~mask)), "n_errors": int(wrong.size),
+                    "test_wrong_idx": wrong.tolist(), "eval_time_s": eval_s}
+                big_correct[kind][seed] = mask
+            first = bt["arms"][kind][str(args.seeds[0])]
+            print(f"[big test] [{kind}] LER = {first['test_ler']:.5f} "
+                  f"({first['n_errors']} errors), seed {args.seeds[0]}")
+        bt.update(paired_mcnemar(arms, args.seeds, big_correct, big_mwpm_correct,
+                                 label=", big test"))
+        results["big_test"] = bt
+
+    resumed = checkpoint.resume_record()
+    if resumed is not None:
+        results["checkpoint"] = resumed
 
     # Write ONE timestamped, provenance-carrying artifact. Never overwrites.
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     outpath = outdir / f"run_{stamp}_d{args.d}_p{args.p}.json"
     outpath.write_text(json.dumps(results, indent=2))
     print(f"\nWrote {outpath}")
+    # Only now is the checkpoint redundant: the JSON holds everything it did.
+    checkpoint.finish()
     print("This file is now the source of truth: it carries its own git commit, "
           "config, seeds, and library versions. The number cannot exist without them.")
 

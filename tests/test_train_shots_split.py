@@ -61,7 +61,7 @@ def test_val_test_identical_with_and_without_train_shots(base, n):
 def test_train_sets_nested(base, monkeypatch):
     train0 = base[0]
     # Small chunks so the extras span several sample() calls and a partial one.
-    monkeypatch.setattr(qec_run, "_EXTRA_TRAIN_CHUNK", 256)
+    monkeypatch.setattr(qec_run, "_FRESH_SHOT_CHUNK", 256)
     small = build(train_shots=500)[0]
     mid = build(train_shots=2600)[0]  # 1,200 extra
     big = build(train_shots=3500)[0]  # 2,100 extra

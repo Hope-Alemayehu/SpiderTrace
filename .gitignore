@@ -12,6 +12,9 @@ dist/
 # Executables
 *.exe
 
+# qec_run.py per-epoch checkpoints (deleted when a run finishes)
+checkpoint_*/
+
 # Virtual environments
 .venv/
 venv/

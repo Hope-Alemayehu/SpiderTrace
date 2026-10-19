@@ -290,6 +290,15 @@ def train_model(model, train_loader, val_loader, config: Dict):
     cross-entropy; None -> unweighted, the original behaviour).
     Returns (history, best_state_dict).
 
+    Optional checkpointing (both absent by default, which is the original loop):
+      * config["on_epoch_end"](state): called after every epoch with the full
+        training state (see _training_state). It reads state only: no RNG is
+        consumed, so a run with it is identical to one without.
+      * config["resume_state"]: such a state, to continue from the epoch after
+        it. Model, optimizer, best-so-far weights, patience counter, history and
+        the torch / CUDA / numpy RNG states are restored, so on CPU a resumed run
+        reproduces the uninterrupted one exactly.
+
     NOTE: pos_weight defaults to 1.0 (plain BCE). The logical error rate weighs
     false positives and false negatives EQUALLY (it is a 0-1 loss), so the
     Bayes-optimal rule is to estimate P(flip|syndrome) and threshold at 0.5 --
@@ -328,7 +337,23 @@ def train_model(model, train_loader, val_loader, config: Dict):
     best_state = copy.deepcopy(model.state_dict())
     epochs_no_improve = 0
 
-    for epoch in range(epochs):
+    on_epoch_end = config.get("on_epoch_end")
+    start_epoch = 0
+    resume = config.get("resume_state")
+    if resume is not None:
+        model.load_state_dict(resume["model_state"])
+        opt.load_state_dict(resume["opt_state"])
+        history = resume["history"]
+        best_val = resume["best_val"]
+        best_state = resume["best_state"]
+        epochs_no_improve = resume["epochs_no_improve"]
+        start_epoch = resume["epoch"]
+        _set_rng_state(resume["rng"])
+        print(f"  [{config['model_type']:>3}] resumed after epoch {start_epoch}")
+        if resume["stopped"]:
+            return history, best_state
+
+    for epoch in range(start_epoch, epochs):
         # ---- train ----
         model.train()
         running = 0.0; nb = 0
@@ -363,6 +388,7 @@ def train_model(model, train_loader, val_loader, config: Dict):
               f"val_recall={m['recall']:.3f}  val_prec={m['precision']:.3f}")
 
         # ---- early stopping on val loss ----
+        stop = False
         if val_loss < best_val - 1e-5:
             best_val = val_loss
             best_state = copy.deepcopy(model.state_dict())
@@ -373,9 +399,40 @@ def train_model(model, train_loader, val_loader, config: Dict):
             if epochs_no_improve >= patience:
                 print(f"  [{config['model_type']:>3}] early stop at epoch "
                       f"{epoch + 1} (no val-loss improvement for {patience}).")
-                break
+                stop = True
+
+        if on_epoch_end is not None:
+            on_epoch_end(_training_state(epoch + 1, model, opt, history, best_val,
+                                         best_state, epochs_no_improve, stop))
+        if stop:
+            break
 
     return history, best_state
+
+
+def _training_state(epoch, model, opt, history, best_val, best_state,
+                    epochs_no_improve, stopped):
+    """Everything train_model needs to continue after `epoch` (1-based)."""
+    return {"epoch": epoch, "model_state": model.state_dict(),
+            "opt_state": opt.state_dict(), "history": history,
+            "best_val": best_val, "best_state": best_state,
+            "epochs_no_improve": epochs_no_improve, "stopped": stopped,
+            "rng": _get_rng_state()}
+
+
+def _get_rng_state():
+    """torch CPU, CUDA (if present) and numpy RNG states. Reading them consumes
+    nothing. The CPU state drives loader shuffling (and dropout on CPU)."""
+    return {"torch": torch.get_rng_state(),
+            "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            "numpy": np.random.get_state()}
+
+
+def _set_rng_state(rng):
+    torch.set_rng_state(rng["torch"])
+    if rng["cuda"] is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(rng["cuda"])
+    np.random.set_state(rng["numpy"])
 
 
 # --------------------------------------------------------------------------- #
