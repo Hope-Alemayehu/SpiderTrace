@@ -374,7 +374,8 @@ def _seed_all(seed):
 
 
 def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
-          aux_class_weight=None, checkpoint=None, ckpt_key=None):
+          aux_class_weight=None, checkpoint=None, ckpt_key=None,
+          lr=1e-3, lr_schedule="constant", lr_min=1e-5, grad_clip=None, patience=10):
     """Train one model with early stopping on the VALIDATION split.
 
     CONTRACT:
@@ -389,6 +390,8 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
         under `ckpt_key`. A model that already finished is loaded instead of
         retrained, and an interrupted one continues after its last saved epoch.
         wall_time_s then sums the time spent in every process.
+      * lr / lr_schedule / lr_min / grad_clip / patience go to train_model (see
+        its docstring). Their defaults are the original training.
 
     Real signature is train_model(model, train_loader, val_loader, config: Dict)
     returning (history, best_state) -- a config dict, not kwargs, and no `device`
@@ -420,7 +423,11 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
     config = {
         "epochs": epochs,
         "lambda_aux": lambda_aux,
-        "patience": 10,             # train_model's own default
+        "patience": patience,       # default 10, train_model's own default
+        "lr": lr,
+        "lr_schedule": lr_schedule,
+        "lr_min": lr_min,
+        "grad_clip": grad_clip,
         "pos_weight": None,         # -> 1.0, the plain-BCE / LER-optimal choice
         "model_type": _model_type(model),   # required: used in train_model's logging
         "balanced_sampler": False,  # logging only; we shuffle at the natural prior
@@ -448,7 +455,13 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
         "n_train": len(train_ds),
         "val_loss": history["val_loss"],
         "train_loss": history["train_loss"],
+        "optim": {"lr": lr, "lr_schedule": lr_schedule, "lr_min": lr_min,
+                  "grad_clip": grad_clip, "patience": patience},
+        "lr": history["lr"],                   # lr used in each epoch
     }
+    for k in ("grad_norm_mean", "grad_norm_max", "clipped_frac"):
+        if k in history:                       # only with grad_clip
+            train_info[k] = history[k]
     if resumed_after is not None:
         train_info["resumed_after_epoch"] = resumed_after
     if checkpoint is not None:
@@ -726,7 +739,8 @@ class RunCheckpoint:
 def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             aux_data_qubits_only=False, aux_class_weight="none",
             train_shots=None, extra_train_seed=None,
-            norm="none", readout="add-mean-max", checkpoint=None, big_test_ds=None):
+            norm="none", readout="add-mean-max", checkpoint=None, big_test_ds=None,
+            train_opts=None):
     """Run one arm across all seeds, sweeping lambda per seed (Option A) and
     selecting best-by-validation. Returns the full grid plus the selected-lambda
     test results, and keeps the per-example correctness mask on the shared test set
@@ -741,6 +755,10 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
 
     norm / readout configure the shared backbone (gnn_models.GNNBackbone) and
     apply IDENTICALLY to every arm. Their defaults are the original backbone.
+
+    train_opts: optimisation options passed to train() (lr, lr_schedule, lr_min,
+    grad_clip, patience), applied IDENTICALLY to every arm; None or {} keeps
+    train()'s defaults, the original training.
 
     checkpoint: a RunCheckpoint, passed through to train(). big_test_ds: optional
     extra test set; each seed's SELECTED model is also scored on it. Selection
@@ -794,7 +812,8 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             model, train_info = train(model, train_ds, val_ds, lambda_aux=lam,
                                       epochs=epochs, seed=seed, device=device,
                                       aux_class_weight=aux_weights,
-                                      checkpoint=checkpoint, ckpt_key=key)
+                                      checkpoint=checkpoint, ckpt_key=key,
+                                      **(train_opts or {}))
 
             # Selection metric: LER on VAL. Reported metric: LER on TEST.
             vp, vt = predict_flips(model, val_ds, device)
@@ -955,7 +974,35 @@ def main():
     ap.add_argument("--big-test-seed", type=int, default=None,
                     help="sampler seed for the big test set. Must differ from "
                          "--split-seed and the extra-train seed. Default: split seed + 2.")
+    # ---- optimisation (all arms). Defaults reproduce the ORIGINAL training. ----
+    ap.add_argument("--lr", type=float, default=1e-3,
+                    help="Adam learning rate (the peak lr with --lr-schedule cosine). "
+                         "Default: 1e-3, as before.")
+    ap.add_argument("--lr-schedule", choices=["constant", "cosine"], default="constant",
+                    help="'cosine' decays the lr from --lr to --lr-min over --epochs, "
+                         "stepped once per epoch. Default: constant, as before.")
+    ap.add_argument("--lr-min", type=float, default=1e-5,
+                    help="final lr of the cosine schedule (unused with constant). "
+                         "Default: 1e-5.")
+    ap.add_argument("--grad-clip", type=float, default=None,
+                    help="clip the global gradient norm to this value before each "
+                         "optimizer step; records per-epoch grad-norm statistics. "
+                         "Default: no clipping, as before.")
+    ap.add_argument("--patience", type=int, default=10,
+                    help="early-stopping patience in epochs (val loss). With a cosine "
+                         "schedule, set it high enough that the low-lr phase is "
+                         "reached. Default: 10, as before.")
     args = ap.parse_args()
+    if args.lr <= 0:
+        ap.error("--lr must be > 0")
+    if args.lr_schedule == "cosine" and not 0 <= args.lr_min <= args.lr:
+        ap.error("--lr-min must satisfy 0 <= --lr-min <= --lr")
+    if args.grad_clip is not None and args.grad_clip <= 0:
+        ap.error("--grad-clip must be > 0")
+    if args.patience < 1:
+        ap.error("--patience must be >= 1")
+    train_opts = dict(lr=args.lr, lr_schedule=args.lr_schedule, lr_min=args.lr_min,
+                      grad_clip=args.grad_clip, patience=args.patience)
     if args.extra_train_seed is not None and args.train_shots is None:
         ap.error("--extra-train-seed only applies with --train-shots")
     big_seed = None
@@ -1043,7 +1090,7 @@ def main():
             aux_data_qubits_only=args.aux_data_qubits_only,
             aux_class_weight=args.aux_class_weight, **data_args,
             norm=args.norm, readout=args.readout,
-            checkpoint=checkpoint, big_test_ds=big_ds)
+            checkpoint=checkpoint, big_test_ds=big_ds, train_opts=train_opts)
         results["arms"][kind] = summary
         correctness[kind] = test_correct
         truths[kind] = test_truth

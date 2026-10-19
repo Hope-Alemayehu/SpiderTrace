@@ -283,11 +283,23 @@ def evaluate(model, loader, model_type: str) -> Dict[str, float]:
 # Training
 # --------------------------------------------------------------------------- #
 def train_model(model, train_loader, val_loader, config: Dict):
-    """Adam lr=1e-3, early stopping (patience 10) on val loss.
+    """Adam, early stopping on val loss. Defaults: lr 1e-3 constant, no gradient
+    clipping, patience 10 (the original training).
 
     config: epochs, lambda_aux, pos_weight (None -> 1.0), model_type, and
     optionally aux_class_weight (a length-4 per-Pauli weight vector for the aux
     cross-entropy; None -> unweighted, the original behaviour).
+    Optional optimisation keys:
+      * lr (1e-3), patience (10)
+      * lr_schedule: "constant" (default) or "cosine", which decays from lr to
+        lr_min (default 1e-5) over `epochs`, stepped once per epoch. Cosine and
+        not a val-loss plateau scheduler: the aux arms' val loss includes
+        lambda * aux, so a plateau scheduler would behave differently per lambda.
+      * grad_clip: clip the global gradient norm to this value before each
+        optimizer step (None, the default: no clipping).
+    history["lr"] records the lr used in each epoch. With grad_clip, history also
+    records per-epoch grad_norm_mean / grad_norm_max (before clipping) and
+    clipped_frac (fraction of steps whose norm exceeded grad_clip).
     Returns (history, best_state_dict).
 
     Optional checkpointing (both absent by default, which is the original loop):
@@ -295,9 +307,9 @@ def train_model(model, train_loader, val_loader, config: Dict):
         training state (see _training_state). It reads state only: no RNG is
         consumed, so a run with it is identical to one without.
       * config["resume_state"]: such a state, to continue from the epoch after
-        it. Model, optimizer, best-so-far weights, patience counter, history and
-        the torch / CUDA / numpy RNG states are restored, so on CPU a resumed run
-        reproduces the uninterrupted one exactly.
+        it. Model, optimizer, lr scheduler, best-so-far weights, patience
+        counter, history and the torch / CUDA / numpy RNG states are restored, so
+        on CPU a resumed run reproduces the uninterrupted one exactly.
 
     NOTE: pos_weight defaults to 1.0 (plain BCE). The logical error rate weighs
     false positives and false negatives EQUALLY (it is a 0-1 loss), so the
@@ -327,12 +339,24 @@ def train_model(model, train_loader, val_loader, config: Dict):
               f"{[round(float(v), 3) for v in aux_class_weight]}"
               f" | aux slots = {getattr(model, 'aux_slots', 'n/a')}")
 
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    opt = torch.optim.Adam(model.parameters(), lr=config.get("lr", 1e-3))
+    lr_schedule = config.get("lr_schedule", "constant")
+    if lr_schedule == "cosine":
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt, T_max=epochs, eta_min=config.get("lr_min", 1e-5))
+    elif lr_schedule == "constant":
+        sched = None       # no scheduler object at all: the original optimizer
+    else:
+        raise ValueError(f"unknown lr_schedule {lr_schedule!r}")
+    grad_clip = config.get("grad_clip")
 
     # best_epoch: 1-based epoch whose weights best_state holds (0 = the initial
     # weights, if no epoch ever improved on inf). Recorded only, never used.
     history = {"train_loss": [], "val_loss": [], "val_recall": [],
-               "val_precision": [], "val_logical_error_rate": [], "best_epoch": 0}
+               "val_precision": [], "val_logical_error_rate": [], "best_epoch": 0,
+               "lr": []}
+    if grad_clip is not None:
+        history.update(grad_norm_mean=[], grad_norm_max=[], clipped_frac=[])
     best_val = float("inf")
     best_state = copy.deepcopy(model.state_dict())
     epochs_no_improve = 0
@@ -343,6 +367,8 @@ def train_model(model, train_loader, val_loader, config: Dict):
     if resume is not None:
         model.load_state_dict(resume["model_state"])
         opt.load_state_dict(resume["opt_state"])
+        if sched is not None:
+            sched.load_state_dict(resume["sched_state"])
         history = resume["history"]
         best_val = resume["best_val"]
         best_state = resume["best_state"]
@@ -356,15 +382,22 @@ def train_model(model, train_loader, val_loader, config: Dict):
     for epoch in range(start_epoch, epochs):
         # ---- train ----
         model.train()
+        epoch_lr = opt.param_groups[0]["lr"]
         running = 0.0; nb = 0
+        norms = []          # pre-clip global grad norms (only with grad_clip)
         for data in train_loader:
             data = data.to(device)
             opt.zero_grad()
             loss = compute_loss(model, data, bce, lambda_aux, aux_class_weight)
             loss.backward()
+            if grad_clip is not None:
+                norms.append(float(torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), grad_clip)))
             opt.step()
             running += loss.item(); nb += 1
         train_loss = running / max(nb, 1)
+        if sched is not None:
+            sched.step()    # sets the lr for the next epoch
 
         # ---- validation loss (same objective) ----
         model.eval()
@@ -382,10 +415,21 @@ def train_model(model, train_loader, val_loader, config: Dict):
         history["val_recall"].append(m["recall"])
         history["val_precision"].append(m["precision"])
         history["val_logical_error_rate"].append(m["logical_error_rate"])
+        history["lr"].append(epoch_lr)
+        extra = ""          # empty with the defaults: the original log line
+        if sched is not None:
+            extra += f"  lr={epoch_lr:.2e}"
+        if grad_clip is not None:
+            n = np.asarray(norms)
+            history["grad_norm_mean"].append(float(n.mean()))
+            history["grad_norm_max"].append(float(n.max()))
+            history["clipped_frac"].append(float((n > grad_clip).mean()))
+            extra += (f"  grad_norm mean={n.mean():.3g} max={n.max():.3g} "
+                      f"clipped={(n > grad_clip).mean():.2f}")
 
         print(f"  [{config['model_type']:>3}] epoch {epoch + 1:>3}/{epochs}  "
               f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
-              f"val_recall={m['recall']:.3f}  val_prec={m['precision']:.3f}")
+              f"val_recall={m['recall']:.3f}  val_prec={m['precision']:.3f}{extra}")
 
         # ---- early stopping on val loss ----
         stop = False
@@ -402,19 +446,22 @@ def train_model(model, train_loader, val_loader, config: Dict):
                 stop = True
 
         if on_epoch_end is not None:
-            on_epoch_end(_training_state(epoch + 1, model, opt, history, best_val,
-                                         best_state, epochs_no_improve, stop))
+            on_epoch_end(_training_state(epoch + 1, model, opt, sched, history,
+                                         best_val, best_state, epochs_no_improve,
+                                         stop))
         if stop:
             break
 
     return history, best_state
 
 
-def _training_state(epoch, model, opt, history, best_val, best_state,
+def _training_state(epoch, model, opt, sched, history, best_val, best_state,
                     epochs_no_improve, stopped):
     """Everything train_model needs to continue after `epoch` (1-based)."""
     return {"epoch": epoch, "model_state": model.state_dict(),
-            "opt_state": opt.state_dict(), "history": history,
+            "opt_state": opt.state_dict(),
+            "sched_state": sched.state_dict() if sched is not None else None,
+            "history": history,
             "best_val": best_val, "best_state": best_state,
             "epochs_no_improve": epochs_no_improve, "stopped": stopped,
             "rng": _get_rng_state()}
