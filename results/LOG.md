@@ -335,3 +335,53 @@
 - **Caveats:** one seed per backbone. Run 9 changed two things at once (LayerNorm and readout) and kept lr 1e-3, which was not retuned for the normalized backbone.
 - **Decision:** keep the default backbone for now. The `--norm` and `--readout` options stay in the code, off by default.
 - **Next:** Run 10, 1M training shots, default backbone, on Kaggle.
+
+## Run 10: data scaling, GNN-A at 600k shots (100 epochs)
+- **Date:** 2026-10-19
+- **Commit:** not recorded in the JSON. Provenance has `git_available: false` and `git_commit`, `git_dirty` and `git_dirty_files` all null: the script was run by full path (`/kaggle/working/SpiderTrace/qec_run.py`) from `/kaggle/working`, outside the repo, so git was not reachable. Commit recovered from the notebook's clone output: [TBD: commit hash]. Whether the tree was dirty is unknown. The provenance config contains `norm` and `readout`, so the code was at 5307ef0 or later.
+- **Where:** Kaggle, GPU
+- **Command:** `python /kaggle/working/SpiderTrace/qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 600000 --arms A --seeds 0 --epochs 100 --device cuda --expect-mwpm-errors 36 --outdir /kaggle/working/results`
+- **Setup:** GNN-A only, default backbone (norm none, add-mean-max readout, 78,053 parameters), d=5, p=0.003, seed 0, up to 100 epochs. 600,000 train shots: the 35,000 base train shots plus 565,000 extra shots from extra_train_seed 12346. Val (7,500) and test (7,500) are the base split with split_seed 12345, the same test set as Runs 3 to 9: `--expect-mwpm-errors 36` passed, and MWPM gets exactly the same test shots wrong as in Runs 6 and 8. Run 9's interpretation planned 1M train shots; this run used 600k.
+- **JSON:** results/run_20261019T064106Z_d5_p0.003.json
+
+| Arm | Test LER | Test errors | Val LER |
+|---|---|---|---|
+| MWPM | 0.0048 | 36 | n/a |
+| GNN-A | 0.0071 | 53 | 0.0064 |
+
+- **Statistical uncertainty per LER:** about ±0.0010 (7,500 test shots)
+- **McNemar (A vs MWPM):** A right & MWPM wrong = 13, MWPM right & A wrong = 30, p = 0.014. MWPM is still significantly better.
+- **Training:** epochs_run 55 (early stop, 10 epochs without val-loss improvement), best_epoch 45, wall time 8,001 s (133.4 min, 145.5 s per epoch).
+- **Loss:**
+  - Final epoch (55): train 0.0197, val 0.0214.
+  - Best epoch (45, the restored weights): train 0.0208, val 0.0180.
+- **Paired comparisons** (same model, seed and test shots), from test_wrong_idx in the JSONs:
+
+| | vs Run 8 (300k) | vs Run 6 (35k) |
+|---|---|---|
+| Wrong in the earlier run | 65 | 93 |
+| Wrong in Run 10 | 53 | 53 |
+| Fixed by Run 10 (wrong before, right in Run 10) | 30 | 58 |
+| Newly wrong in Run 10 (right before, wrong in Run 10) | 18 | 18 |
+| Wrong in both | 35 | 35 |
+| Exact binomial McNemar p | 0.11 | 4.7e-6 |
+
+  - Against Run 8 the difference is not significant: 30 vs 18 of 48 discordant shots. For scale, Runs 6 and 7 (same data) disagree on 40 shots, split 19 vs 21. The split here leans toward Run 10 but not enough to rule out chance.
+  - Against Run 6 the improvement is clear.
+- **Notes:**
+  - Val loss is 0.170 after epoch 1, already well below the trivial 0.44. One epoch at 600k is 2,344 gradient steps; the best epoch 45 is at about 105k steps.
+  - No loss spikes: no epoch-to-epoch jump above 1.3x in train or val loss.
+  - At the best epoch val loss (0.0180) is below train loss (0.0208), as in Run 8; train loss is measured with dropout active.
+
+## Data scaling summary (GNN-A, default backbone)
+All three runs use the same model, seed 0, up to 100 epochs, and the same 7,500 test shots, on which MWPM makes 36 errors.
+
+| Run | Train shots | Test errors | Test LER | Ratio to MWPM (36 errors) | Paired p vs previous row |
+|---|---|---|---|---|---|
+| Run 6 | 35,000 | 93 | 0.0124 | 2.58 | n/a |
+| Run 8 | 300,000 | 65 | 0.0087 | 1.81 | 0.00062 |
+| Run 10 | 600,000 | 53 | 0.0071 | 1.47 | 0.11 |
+
+- Single-seed results: each row is one training run.
+- The ratio to MWPM is noisy. MWPM makes only 36 errors on this test set, so the ratio's denominator alone carries a relative uncertainty of about 1/sqrt(36), roughly 17%.
+- The step from 35k to 300k is significant. The step from 300k to 600k is in the same direction but not significant on this test set.
