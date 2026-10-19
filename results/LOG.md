@@ -374,14 +374,72 @@
   - At the best epoch val loss (0.0180) is below train loss (0.0208), as in Run 8; train loss is measured with dropout active.
 
 ## Data scaling summary (GNN-A, default backbone)
-All three runs use the same model, seed 0, up to 100 epochs, and the same 7,500 test shots, on which MWPM makes 36 errors.
+All four runs use the same model, seed 0, up to 100 epochs, and the same 7,500 test shots, on which MWPM makes 36 errors. Run 11 is also scored on the big test set (200,000 fresh shots, seed 12347), on which MWPM makes 664 errors.
 
-| Run | Train shots | Test errors | Test LER | Ratio to MWPM (36 errors) | Paired p vs previous row |
-|---|---|---|---|---|---|
-| Run 6 | 35,000 | 93 | 0.0124 | 2.58 | n/a |
-| Run 8 | 300,000 | 65 | 0.0087 | 1.81 | 0.00062 |
-| Run 10 | 600,000 | 53 | 0.0071 | 1.47 | 0.11 |
+| Run | Train shots | Test errors | Test LER | Ratio to MWPM (36 errors) | Paired p vs previous row | Big test errors (LER) | Big-test ratio to MWPM (664 errors) |
+|---|---|---|---|---|---|---|---|
+| Run 6 | 35,000 | 93 | 0.0124 | 2.58 | n/a | n/a | n/a |
+| Run 8 | 300,000 | 65 | 0.0087 | 1.81 | 0.00062 | n/a | n/a |
+| Run 10 | 600,000 | 53 | 0.0071 | 1.47 | 0.11 | n/a | n/a |
+| Run 11 | 1,000,000 | 37 | 0.0049 | 1.03 | 0.023 | 1,021 (0.0051) | 1.54 |
 
 - Single-seed results: each row is one training run.
-- The ratio to MWPM is noisy. MWPM makes only 36 errors on this test set, so the ratio's denominator alone carries a relative uncertainty of about 1/sqrt(36), roughly 17%.
-- The step from 35k to 300k is significant. The step from 300k to 600k is in the same direction but not significant on this test set.
+- The ratio to MWPM on the 7,500-shot set is noisy. MWPM makes only 36 errors there, so the ratio's denominator alone carries a relative uncertainty of about 1/sqrt(36), roughly 17%.
+- The 7,500-shot ratios also understate the gap: 36 errors is high for MWPM. At its big-test LER (0.00332) it would make about 25 errors on 7,500 shots. For Run 11 the ratio is 1.03 on the 7,500-shot set and 1.54 on the big test.
+- On the 7,500-shot set, the steps from 35k to 300k (p = 0.00062) and from 600k to 1M (p = 0.023) are significant. The step from 300k to 600k is in the same direction but not significant.
+- From Run 11 on, the big-test numbers are the headline.
+
+## Run 11: data scaling, GNN-A at 1M shots, with the big test set (100 epochs)
+- **Date:** 2026-10-19
+- **Commit:** 70ce245 (clean)
+- **Where:** Kaggle, GPU
+- **Command:** `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 1000000 --arms A --seeds 0 --epochs 100 --device cuda --expect-mwpm-errors 36 --big-test-shots 200000 --outdir /kaggle/working/results`
+- **Setup:** GNN-A only, default backbone (norm none, add-mean-max readout, 78,053 parameters), d=5, p=0.003, seed 0, up to 100 epochs. 1,000,000 train shots: the 35,000 base train shots plus 965,000 extra shots from extra_train_seed 12346. Val (7,500) and test (7,500) are the base split with split_seed 12345, the same test set as Runs 3 to 10: `--expect-mwpm-errors 36` passed, and MWPM gets exactly the same test shots wrong as in Run 10. Not resumed (no checkpoint record in the JSON).
+- **Big test set:** 200,000 fresh shots from seed 12347, scored after training and never used for training, selection or early stopping. Built in 38.2 s; MWPM decoded it in 2.5 s and GNN-A in 27.8 s.
+- **JSON:** results/run_20261019T100602Z_d5_p0.003.json
+
+**Primary test set (7,500 shots)**
+
+| Arm | Test LER | Test errors | Val LER |
+|---|---|---|---|
+| MWPM | 0.0048 | 36 | n/a |
+| GNN-A | 0.0049 | 37 | 0.0057 |
+
+- **Statistical uncertainty per LER:** about ±0.0008 (7,500 test shots)
+- **McNemar (A vs MWPM):** A right & MWPM wrong = 11, MWPM right & A wrong = 12, p = 1.0. No detectable difference on this set.
+- **Paired comparison with Run 10** (600k train shots, same model, seed and test shots), from test_wrong_idx in both JSONs:
+
+| | Shots |
+|---|---|
+| Wrong in Run 10 | 53 |
+| Wrong in Run 11 | 37 |
+| Fixed by Run 11 (wrong in Run 10, right in Run 11) | 30 |
+| Newly wrong in Run 11 (right in Run 10, wrong in Run 11) | 14 |
+| Wrong in both | 23 |
+
+  - Exact binomial McNemar: p = 0.023 (14 vs 30 of 44 discordant shots).
+
+**Big test set (200,000 shots, seed 12347)**
+
+| Arm | Test LER | Test errors |
+|---|---|---|
+| MWPM | 0.00332 (±0.00013) | 664 |
+| GNN-A | 0.00511 (±0.00016) | 1,021 |
+
+- **Ratio GNN-A / MWPM:** 1.54 (1,021 vs 664 errors).
+- **McNemar (A vs MWPM):** A right & MWPM wrong = 184, MWPM right & A wrong = 541, p = 1.3e-41. MWPM is clearly better. Both are wrong on 480 shots.
+
+- **Training:** epochs_run 41 (early stop, 10 epochs without val-loss improvement), best_epoch 31, wall time 9,913 s (165.2 min, 241.8 s per epoch, 3,907 gradient steps per epoch).
+- **Loss:**
+  - Final epoch (41): train 0.0233, val 0.0242.
+  - Best epoch (31, the restored weights): train 0.0184, val 0.0161.
+- **Notes:**
+  - Instability: at epoch 32 both losses jumped, train from 0.0184 to 0.0207 and val from 0.0161 to 0.0239, and the run did not recover. Val loss came back to 0.0172 at epoch 35 but never below 0.0161 again, and train loss never got back below 0.0204. Early stopping therefore restored epoch 31. An earlier jump at epoch 4 (val 0.0425 to 0.0624) did recover.
+  - Likely cause, not confirmed: the constant lr of 1e-3 with no gradient clipping.
+
+## Interpretation (Run 11)
+- **The primary set shows parity, the big test does not.** On the 7,500-shot set GNN-A and MWPM are level (37 vs 36 errors, p = 1.0). On the big test MWPM is clearly better (1,021 vs 664 errors, about 1.54x, p = 1.3e-41).
+- **The 7,500-shot set is too small to resolve this.** GNN-A's 37 errors match its big-test rate (0.00511 × 7,500 is about 38). MWPM's 36 is well above its big-test rate (0.00332 × 7,500 is about 25). The apparent parity comes from MWPM doing unusually badly on this particular set.
+- **From now on the big test is the headline number.** The 7,500-shot set stays the primary split for continuity and paired comparisons with earlier runs.
+- **More data still helped:** 53 to 37 errors from 600k to 1M on the primary set, paired p = 0.023.
+- **Next:** Run 12, same as Run 11 plus lr decay and gradient clipping.
