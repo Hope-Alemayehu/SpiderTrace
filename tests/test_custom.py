@@ -14,6 +14,15 @@ from spidertrace.engine import propagate_errors
 from spidertrace.error import PauliError
 from spidertrace.zx_visual import save_complete_visualization
 
+try:
+    import pytest
+except ImportError:  # running as a script without pytest installed
+    pass
+else:
+    pytestmark = pytest.mark.skip(
+        reason="interactive script, not a test: it reads gates and errors with input(); "
+               "run it directly as a script from the repo root with PYTHONPATH=.")
+
 
 def create_custom_circuit():
     """Interactive circuit builder"""

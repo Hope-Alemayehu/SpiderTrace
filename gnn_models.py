@@ -72,10 +72,29 @@ READOUT_DIM = HIDDEN * 3   # default readout (add + mean + max) -> 288; see GNNB
 #            "mean-max"     -> concat(mean, max) pooling (2 * hidden). Every graph
 #                              has the same nodes, so add pool = num_nodes * mean
 #                              pool: dropping it loses no information, only scale.
+#            "fired"        -> concat(mean, max) over FIRED detector nodes only
+#                              (2 * hidden). A shot with no fired detector gets a
+#                              learned constant "empty" vector instead.
+#   head:    "linear" -> Linear(out_dim, 1) flip head
+#            "mlp"    -> out_dim -> 128 -> 64 -> 1 with ReLU (flip head only; the
+#                        aux head stays linear)
+#   residual: False -> x = relu(norm(conv(x)))
+#             True  -> x = x + relu(norm(conv(x)))
 NORM_CHOICES = ("none", "layer")
-READOUT_CHOICES = ("add-mean-max", "mean-max")
+READOUT_CHOICES = ("add-mean-max", "mean-max", "fired")
+HEAD_CHOICES = ("linear", "mlp")
 _POOLS = {"add-mean-max": (global_add_pool, global_mean_pool, global_max_pool),
-          "mean-max": (global_mean_pool, global_max_pool)}
+          "mean-max": (global_mean_pool, global_max_pool),
+          "fired": (global_mean_pool, global_max_pool)}
+
+
+def make_flip_head(in_dim: int, head: str = "linear") -> nn.Module:
+    if head == "linear":
+        return nn.Linear(in_dim, 1)
+    if head == "mlp":
+        return nn.Sequential(nn.Linear(in_dim, 128), nn.ReLU(),
+                             nn.Linear(128, 64), nn.ReLU(), nn.Linear(64, 1))
+    raise ValueError(f"head must be one of {HEAD_CHOICES}, got {head!r}")
 
 
 # --------------------------------------------------------------------------- #
@@ -84,13 +103,16 @@ _POOLS = {"add-mean-max": (global_add_pool, global_mean_pool, global_max_pool),
 class GNNBackbone(nn.Module):
     """4x GINEConv (hidden=96) + global pooling -> graph vector of size out_dim.
 
-    Defaults (norm="none", readout="add-mean-max") give the original 288-dim
-    backbone, parameter for parameter.
+    Defaults (norm="none", readout="add-mean-max", residual=False, the original
+    input dims) give the original 288-dim backbone, parameter for parameter.
+    node_in_dim / edge_in_dim grow when graph_variants adds feature columns
+    (--sublattice-types); the fired bit stays column 0 of x either way.
     """
 
     def __init__(self, hidden: int = HIDDEN, num_layers: Optional[int] = None,
                  dropout: float = 0.1, norm: str = "none",
-                 readout: str = "add-mean-max"):
+                 readout: str = "add-mean-max", residual: bool = False,
+                 node_in_dim: int = NODE_IN_DIM, edge_in_dim: int = EDGE_IN_DIM):
         super().__init__()
         if norm not in NORM_CHOICES:
             raise ValueError(f"norm must be one of {NORM_CHOICES}, got {norm!r}")
@@ -103,7 +125,8 @@ class GNNBackbone(nn.Module):
         self.dropout = dropout
         self.norm = norm
         self.readout = readout
-        self.node_encoder = nn.Linear(NODE_IN_DIM, hidden)
+        self.residual = residual
+        self.node_encoder = nn.Linear(node_in_dim, hidden)
         self.convs = nn.ModuleList()
         for _ in range(num_layers):
             # Each GINEConv uses a 2-layer MLP with ReLU.
@@ -112,24 +135,41 @@ class GNNBackbone(nn.Module):
                 nn.ReLU(),
                 nn.Linear(hidden, hidden),
             )
-            # edge_dim projects the EDGE_IN_DIM-dim edge features to `hidden` internally.
-            self.convs.append(GINEConv(mlp, train_eps=True, edge_dim=EDGE_IN_DIM))
+            # edge_dim projects the edge features to `hidden` internally.
+            self.convs.append(GINEConv(mlp, train_eps=True, edge_dim=edge_in_dim))
         # Empty unless norm="layer", so the default model has exactly the original
         # parameters and state_dict keys.
         self.norms = nn.ModuleList(
             [nn.LayerNorm(hidden) for _ in range(num_layers)] if norm == "layer" else [])
         self.out_dim = hidden * len(_POOLS[readout])
+        if readout == "fired":
+            # Graph vector for shots with no fired detector: learned, starts at 0.
+            self.empty = nn.Parameter(torch.zeros(self.out_dim))
 
     def forward(self, x, edge_index, edge_attr, batch) -> torch.Tensor:
+        fired = x[:, 0] > 0.5          # input column 0; the boundary is never fired
         x = self.node_encoder(x)
         for i, conv in enumerate(self.convs):
-            x = conv(x, edge_index, edge_attr)
+            h = conv(x, edge_index, edge_attr)
             if self.norms:
-                x = self.norms[i](x)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        graph = torch.cat([pool(x, batch) for pool in _POOLS[self.readout]], dim=1)
+                h = self.norms[i](h)
+            h = F.relu(h)
+            h = F.dropout(h, p=self.dropout, training=self.training)
+            x = x + h if self.residual else h
+        if self.readout == "fired":
+            graph = self._fired_pool(x, batch, fired)
+        else:
+            graph = torch.cat([pool(x, batch) for pool in _POOLS[self.readout]], dim=1)
         return F.dropout(graph, p=self.dropout, training=self.training)
+
+    def _fired_pool(self, x, batch, fired):
+        n_graphs = int(batch.max()) + 1 if batch.numel() else 0
+        bf = batch[fired]
+        xf = x[fired]
+        graph = torch.cat([pool(xf, bf, size=n_graphs) for pool in _POOLS["fired"]], dim=1)
+        has = torch.zeros(n_graphs, dtype=torch.bool, device=x.device)
+        has[bf] = True
+        return torch.where(has[:, None], graph, self.empty.expand_as(graph))
 
 
 # --------------------------------------------------------------------------- #
@@ -141,11 +181,12 @@ class GNN_A(nn.Module):
     has_aux = False
 
     def __init__(self, num_qubits: int, dropout: float = 0.1, norm: str = "none",
-                 readout: str = "add-mean-max"):
+                 readout: str = "add-mean-max", head: str = "linear", **backbone_kw):
         super().__init__()
         self.num_qubits = num_qubits
-        self.backbone = GNNBackbone(dropout=dropout, norm=norm, readout=readout)
-        self.flip_head = nn.Linear(self.backbone.out_dim, 1)
+        self.backbone = GNNBackbone(dropout=dropout, norm=norm, readout=readout,
+                                    **backbone_kw)
+        self.flip_head = make_flip_head(self.backbone.out_dim, head)
 
     def forward(self, data):
         g = self.backbone(data.x, data.edge_index, data.edge_attr, data.batch)
@@ -168,11 +209,12 @@ class _GNNWithAux(nn.Module):
 
     def __init__(self, num_qubits: int, dropout: float = 0.1,
                  aux_qubits: Optional[List[int]] = None, norm: str = "none",
-                 readout: str = "add-mean-max"):
+                 readout: str = "add-mean-max", head: str = "linear", **backbone_kw):
         super().__init__()
         self.num_qubits = num_qubits
-        self.backbone = GNNBackbone(dropout=dropout, norm=norm, readout=readout)
-        self.flip_head = nn.Linear(self.backbone.out_dim, 1)
+        self.backbone = GNNBackbone(dropout=dropout, norm=norm, readout=readout,
+                                    **backbone_kw)
+        self.flip_head = make_flip_head(self.backbone.out_dim, head)
         if aux_qubits is None:
             self.aux_slots = num_qubits
         else:

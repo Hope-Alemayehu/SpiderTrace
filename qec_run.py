@@ -740,7 +740,8 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             aux_data_qubits_only=False, aux_class_weight="none",
             train_shots=None, extra_train_seed=None,
             norm="none", readout="add-mean-max", checkpoint=None, big_test_ds=None,
-            train_opts=None):
+            train_opts=None, head="linear", residual=False, depth=None,
+            boundary="global", sublattice_types=False):
     """Run one arm across all seeds, sweeping lambda per seed (Option A) and
     selecting best-by-validation. Returns the full grid plus the selected-lambda
     test results, and keeps the per-example correctness mask on the shared test set
@@ -753,8 +754,14 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     train_shots / extra_train_seed resize the train split only (see
     make_datasets); None keeps the base split.
 
-    norm / readout configure the shared backbone (gnn_models.GNNBackbone) and
-    apply IDENTICALLY to every arm. Their defaults are the original backbone.
+    norm / readout / head / residual / depth configure the shared model
+    (gnn_models) and apply IDENTICALLY to every arm. Their defaults are the
+    original model.
+
+    boundary / sublattice_types select a variant of the decoding graph
+    (graph_variants.transform), applied IDENTICALLY to train, val, test and the
+    big test set, for every arm. Defaults: the original graph, unchanged objects.
+    big_test_ds must be passed in the DEFAULT graph; it is transformed here.
 
     train_opts: optimisation options passed to train() (lr, lr_schedule, lr_min,
     grad_clip, patience), applied IDENTICALLY to every arm; None or {} keeps
@@ -765,9 +772,20 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     never looks at it.
 
     Returns (summary, test_correct, test_truth, big), where big maps each seed to
-    (correct_mask, y_true, eval_time_s) on big_test_ds ({} without one)."""
+    (correct_mask, y_true, eval_time_s, zero_fired_stats) on big_test_ds ({}
+    without one)."""
+    import graph_variants
     data_args = dict(train_shots=train_shots, extra_train_seed=extra_train_seed)
-    model_args = dict(norm=norm, readout=readout)
+    graph_args = dict(boundary=boundary, sublattice_types=sublattice_types)
+    node_in, edge_in = graph_variants.feature_dims(sublattice_types)
+    model_args = dict(norm=norm, readout=readout, head=head, residual=residual,
+                      num_layers=depth, node_in_dim=node_in, edge_in_dim=edge_in)
+
+    def variant(ds):
+        return graph_variants.transform(ds, d, p, **graph_args)
+
+    if big_test_ds is not None:
+        big_test_ds = variant(big_test_ds)
     # GNN-A has no aux head: its lambda grid is a single no-op point.
     arm_lambdas = [0.0] if kind == "A" else list(lambdas)
 
@@ -796,9 +814,10 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
 
     for seed in model_seeds:
         # Split is fixed by split_seed, so the test set is identical across arms & seeds.
-        train_ds, val_ds, test_ds = make_datasets(d, p, shots, split_seed, **data_args)
+        train_ds, val_ds, test_ds = (variant(x) for x in
+                                     make_datasets(d, p, shots, split_seed, **data_args))
 
-        best = None  # (val_ler, lambda, test_ler, correct_mask, y_true, aux, model)
+        best = None  # (val_ler, lambda, test_ler, correct_mask, y_true, aux, model, zf)
         for lam in arm_lambdas:
             # Seed BEFORE building the model so `seed` controls the initial
             # weights too. Previously the model was constructed from whatever
@@ -831,20 +850,23 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
                 # Aux diagnostics on TEST for this lambda: reporting only, never
                 # used for selection (selection above is val LER).
                 aux = aux_diagnostics(model, test_ds, device, num_qubits)
-                best = (val_ler, lam, test_ler, (tp == tt), tt, aux, model)
+                best = (val_ler, lam, test_ler, (tp == tt), tt, aux, model,
+                        zero_fired_stats(test_ds, tp, tt))
 
-        val_ler, lam, test_ler, correct_mask, y_true, aux, best_model = best
+        val_ler, lam, test_ler, correct_mask, y_true, aux, best_model, zf = best
         if big_test_ds is not None:
             t0 = time.perf_counter()
             bp, bt = predict_flips(best_model, big_test_ds, device)
-            big[seed] = ((bp == bt), bt, time.perf_counter() - t0)
+            big[seed] = ((bp == bt), bt, time.perf_counter() - t0,
+                         zero_fired_stats(big_test_ds, bp, bt))
         # test_wrong_idx: positions in the shared test split that this model got
         # wrong. Lets runs in separate processes (e.g. different train sizes) be
         # compared with a paired McNemar later.
         selected.append({"seed": seed, "selected_lambda": lam,
                          "val_ler": val_ler, "test_ler": test_ler,
                          "aux": aux,
-                         "test_wrong_idx": np.flatnonzero(~correct_mask).tolist()})
+                         "test_wrong_idx": np.flatnonzero(~correct_mask).tolist(),
+                         "zero_fired_test": zf})
         test_correct[seed] = correct_mask
         test_truth[seed] = y_true
 
@@ -863,8 +885,24 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
         "aux_class_freq_train": aux_freq,
         # backbone actually built for this arm (identical across seeds and lambdas)
         "model": {**model_args, "n_params": n_params},
+        "graph": graph_args,
     }
     return summary, test_correct, test_truth, big
+
+
+_FIRED_COUNT_CACHE = {}
+
+
+def zero_fired_stats(ds, pred, y_true):
+    """Shots with no fired detector: how many, how many the model calls a flip,
+    and how many truly flip (reporting only)."""
+    key = id(ds)
+    if key not in _FIRED_COUNT_CACHE or _FIRED_COUNT_CACHE[key][0] is not ds:
+        counts = np.array([int(g.x[:, 0].sum()) for g in ds])
+        _FIRED_COUNT_CACHE[key] = (ds, counts)
+    zero = _FIRED_COUNT_CACHE[key][1] == 0
+    return {"n": int(zero.sum()), "pred_flip": int(np.asarray(pred)[zero].sum()),
+            "true_flip": int(np.asarray(y_true)[zero].sum())}
 
 # Paired McNemar tests reported per run: (results key, arm a, arm b), b = None = MWPM.
 _PAIRS = [("mcnemar_zx_vs_raw", "ZX", "Raw"),
@@ -900,9 +938,10 @@ def mwpm_on_test(d, p, test_ds):
     dem = circ.detector_error_model(decompose_errors=True)
     matching = pymatching.Matching.from_detector_error_model(dem)
 
-    # Nodes 0..num_detectors-1 are detectors, the last node is the boundary.
+    # Nodes 0..num_detectors-1 are detectors, then the boundary node(s) (x[:, 4]
+    # = 1; one in the default graph, several with --boundary per-round).
     # Column 0 of x is the 'fired' bit, so this rebuilds each shot's syndrome.
-    dets = np.stack([g.x[:-1, 0].numpy() for g in test_ds]).astype(np.uint8)
+    dets = np.stack([g.x[g.x[:, 4] == 0, 0].numpy() for g in test_ds]).astype(np.uint8)
     assert dets.shape[1] == circ.num_detectors, "syndrome length mismatch"
     y_true = np.array([int(g.y.item()) for g in test_ds])
 
@@ -953,14 +992,35 @@ def main():
                          "errors on the test split: a fingerprint that the test set "
                          "is the expected one. Default: no check.")
     # ---- backbone options (all arms). Defaults reproduce the ORIGINAL backbone. ----
-    from gnn_models import NORM_CHOICES, READOUT_CHOICES
+    from gnn_models import HEAD_CHOICES, NORM_CHOICES, READOUT_CHOICES
+    from graph_variants import BOUNDARY_CHOICES
     ap.add_argument("--norm", choices=NORM_CHOICES, default="none",
                     help="normalization after each GINEConv: 'layer' = LayerNorm "
                          "before the ReLU. Applies to every arm. Default: none, as before.")
     ap.add_argument("--readout", choices=READOUT_CHOICES, default="add-mean-max",
                     help="graph pooling: 'mean-max' drops the add pool, which on this "
-                         "fixed-size graph is num_nodes x the mean pool. Applies to "
-                         "every arm. Default: add-mean-max, as before.")
+                         "fixed-size graph is num_nodes x the mean pool; 'fired' pools "
+                         "(mean, max) over fired detectors only, with a learned vector "
+                         "for shots with none. Applies to every arm. Default: "
+                         "add-mean-max, as before.")
+    ap.add_argument("--head", choices=HEAD_CHOICES, default="linear",
+                    help="flip head: 'mlp' = out_dim -> 128 -> 64 -> 1 with ReLU (the aux "
+                         "head stays linear). Applies to every arm. Default: linear, as before.")
+    ap.add_argument("--residual", action="store_true",
+                    help="residual message passing, x = x + relu(norm(conv(x))). "
+                         "Applies to every arm. Default: off, as before.")
+    ap.add_argument("--depth", type=int, default=None,
+                    help="number of GINEConv layers. Default: 4 (gnn_models.NUM_MP_LAYERS), "
+                         "as before.")
+    # ---- graph variants (all arms). Defaults reproduce the ORIGINAL graph. ----
+    ap.add_argument("--sublattice-types", action="store_true",
+                    help="add a node feature marking the label-carrying detector "
+                         "sublattice and an edge feature marking its boundary edges "
+                         "(graph_variants). Applies to every arm. Default: off, as before.")
+    ap.add_argument("--boundary", choices=BOUNDARY_CHOICES, default="global",
+                    help="'per-round' replaces the single boundary node by one per "
+                         "detector round (graph_variants). Applies to every arm. "
+                         "Default: global, as before.")
     # ---- resume and extra evaluation. Defaults reproduce the ORIGINAL results. ----
     ap.add_argument("--resume", action="store_true",
                     help="continue an interrupted run from its per-epoch checkpoint "
@@ -1001,8 +1061,13 @@ def main():
         ap.error("--grad-clip must be > 0")
     if args.patience < 1:
         ap.error("--patience must be >= 1")
+    if args.depth is not None and args.depth < 1:
+        ap.error("--depth must be >= 1")
     train_opts = dict(lr=args.lr, lr_schedule=args.lr_schedule, lr_min=args.lr_min,
                       grad_clip=args.grad_clip, patience=args.patience)
+    arch_args = dict(norm=args.norm, readout=args.readout, head=args.head,
+                     residual=args.residual, depth=args.depth, boundary=args.boundary,
+                     sublattice_types=args.sublattice_types)
     if args.extra_train_seed is not None and args.train_shots is None:
         ap.error("--extra-train-seed only applies with --train-shots")
     big_seed = None
@@ -1082,14 +1147,13 @@ def main():
 
     correctness = {}  # arm -> {seed -> mask}
     truths = {}       # arm -> {seed -> y_true}
-    big = {}          # arm -> {seed -> (mask, y_true, eval_time_s)} on the big test set
+    big = {}          # arm -> {seed -> (mask, y_true, eval_time_s, zero_fired)} on big test
     for kind in arms:
         summary, test_correct, test_truth, big[kind] = run_arm(
             kind, args.d, args.p, args.shots, args.split_seed,
             args.seeds, args.lambdas, args.epochs, args.device,
             aux_data_qubits_only=args.aux_data_qubits_only,
-            aux_class_weight=args.aux_class_weight, **data_args,
-            norm=args.norm, readout=args.readout,
+            aux_class_weight=args.aux_class_weight, **data_args, **arch_args,
             checkpoint=checkpoint, big_test_ds=big_ds, train_opts=train_opts)
         results["arms"][kind] = summary
         correctness[kind] = test_correct
@@ -1129,14 +1193,15 @@ def main():
             bt["arms"][kind] = {}
             big_correct[kind] = {}
             for seed in args.seeds:
-                mask, y_true, eval_s = big[kind][seed]
+                mask, y_true, eval_s, zf = big[kind][seed]
                 if not np.array_equal(y_true, big_mwpm_truth):
                     raise RuntimeError(f"Big test set of {kind} at seed {seed} differs "
                                        "from MWPM's.")
                 wrong = np.flatnonzero(~mask)
                 bt["arms"][kind][str(seed)] = {
                     "test_ler": float(np.mean(~mask)), "n_errors": int(wrong.size),
-                    "test_wrong_idx": wrong.tolist(), "eval_time_s": eval_s}
+                    "test_wrong_idx": wrong.tolist(), "eval_time_s": eval_s,
+                    "zero_fired": zf}
                 big_correct[kind][seed] = mask
             first = bt["arms"][kind][str(args.seeds[0])]
             print(f"[big test] [{kind}] LER = {first['test_ler']:.5f} "

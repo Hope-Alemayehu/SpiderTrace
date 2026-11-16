@@ -1,0 +1,237 @@
+{
+ "d3": {
+  "d": 3,
+  "p": 0.003,
+  "rounds": 3,
+  "nodes": 25,
+  "detectors": 24,
+  "undirected_edges": 78,
+  "boundary_edges": 24,
+  "boundary_node_degree": 24,
+  "boundary_adjacent_detectors": 24,
+  "detector_degree_hist": {
+   "3": 4,
+   "5": 8,
+   "6": 8,
+   "8": 4
+  },
+  "detector_degree_mean": 5.5,
+  "diameter_with_boundary": 2,
+  "max_hops_detector_to_boundary_node": 1,
+  "connected_without_boundary": false,
+  "components_without_boundary": [
+   16,
+   8
+  ],
+  "diameter_without_boundary": 6,
+  "mean_hops_between_detectors_with_boundary": 1.8043478260869565,
+  "mean_hops_between_detectors_without_boundary": Infinity,
+  "logical": {
+   "min_hops": 3,
+   "min_weight": 13.364140330773179,
+   "min_weight_path_hops": 3,
+   "min_weight_path_detectors": 2,
+   "min_weight_path_boundary_edges": 2
+  },
+  "walk_share_through_boundary": [
+   {
+    "k": 1,
+    "mean_all_detectors": 0.16335978835978837,
+    "mean_boundary_adjacent": 0.16335978835978837,
+    "mean_not_boundary_adjacent": null,
+    "min": 0.11111111111111116,
+    "max": 0.25
+   },
+   {
+    "k": 2,
+    "mean_all_detectors": 0.5038322686102903,
+    "mean_boundary_adjacent": 0.5038322686102903,
+    "mean_not_boundary_adjacent": null,
+    "min": 0.375,
+    "max": 0.6829268292682926
+   },
+   {
+    "k": 3,
+    "mean_all_detectors": 0.6608191120191508,
+    "mean_boundary_adjacent": 0.6608191120191508,
+    "mean_not_boundary_adjacent": null,
+    "min": 0.5429638854296388,
+    "max": 0.8102409638554217
+   },
+   {
+    "k": 4,
+    "mean_all_detectors": 0.7713017845761664,
+    "mean_boundary_adjacent": 0.7713017845761664,
+    "mean_not_boundary_adjacent": null,
+    "min": 0.6700054884742042,
+    "max": 0.8922135328119687
+   },
+   {
+    "k": 5,
+    "mean_all_detectors": 0.8428536288183198,
+    "mean_boundary_adjacent": 0.8428536288183198,
+    "mean_not_boundary_adjacent": null,
+    "min": 0.7612889451451055,
+    "max": 0.9376455067515133
+   },
+   {
+    "k": 6,
+    "mean_all_detectors": 0.8911707450498194,
+    "mean_boundary_adjacent": 0.8911707450498194,
+    "mean_not_boundary_adjacent": null,
+    "min": 0.8274340721648608,
+    "max": 0.9642301710730948
+   },
+   {
+    "k": 7,
+    "mean_all_detectors": 0.9239751459647702,
+    "mean_boundary_adjacent": 0.9239751459647702,
+    "mean_not_boundary_adjacent": null,
+    "min": 0.8751993372014311,
+    "max": 0.9795128862035433
+   },
+   {
+    "k": 8,
+    "mean_all_detectors": 0.9465310766119351,
+    "mean_boundary_adjacent": 0.9465310766119351,
+    "mean_not_boundary_adjacent": null,
+    "min": 0.9097195653120119,
+    "max": 0.9882932454108377
+   }
+  ],
+  "zero_fired": {
+   "shots": 1000000,
+   "seed": 2026,
+   "zero_fired": 598786,
+   "fraction": 0.598786,
+   "ci95": [
+    0.597824550066869,
+    0.5997468777052386
+   ],
+   "zero_fired_with_obs_flip": 0,
+   "obs_flip_rate_given_zero_fired": 0.0,
+   "p_no_dem_error_at_all": 0.5986132369782583,
+   "mean_fired_per_shot": 0.861329
+  }
+ },
+ "d5": {
+  "d": 5,
+  "p": 0.003,
+  "rounds": 5,
+  "nodes": 121,
+  "detectors": 120,
+  "undirected_edges": 502,
+  "boundary_edges": 72,
+  "boundary_node_degree": 72,
+  "boundary_adjacent_detectors": 72,
+  "detector_degree_hist": {
+   "3": 6,
+   "4": 2,
+   "5": 8,
+   "6": 26,
+   "7": 16,
+   "8": 20,
+   "9": 18,
+   "11": 12,
+   "12": 12
+  },
+  "detector_degree_mean": 7.766666666666667,
+  "diameter_with_boundary": 4,
+  "max_hops_detector_to_boundary_node": 2,
+  "connected_without_boundary": false,
+  "components_without_boundary": [
+   72,
+   48
+  ],
+  "diameter_without_boundary": 10,
+  "mean_hops_between_detectors_with_boundary": 2.537114845938375,
+  "mean_hops_between_detectors_without_boundary": Infinity,
+  "logical": {
+   "min_hops": 5,
+   "min_weight": 22.873981294408672,
+   "min_weight_path_hops": 5,
+   "min_weight_path_detectors": 4,
+   "min_weight_path_boundary_edges": 2
+  },
+  "walk_share_through_boundary": [
+   {
+    "k": 1,
+    "mean_all_detectors": 0.08139550264550266,
+    "mean_boundary_adjacent": 0.13565917107583778,
+    "mean_not_boundary_adjacent": 0.0,
+    "min": 0.0,
+    "max": 0.25
+   },
+   {
+    "k": 2,
+    "mean_all_detectors": 0.3648335511345155,
+    "mean_boundary_adjacent": 0.5828942196222915,
+    "mean_not_boundary_adjacent": 0.037742548402851475,
+    "min": 0.025316455696202556,
+    "max": 0.8172043010752688
+   },
+   {
+    "k": 3,
+    "mean_all_detectors": 0.5021976756844977,
+    "mean_boundary_adjacent": 0.6635107603902283,
+    "mean_not_boundary_adjacent": 0.26022804862590193,
+    "min": 0.18356456776947705,
+    "max": 0.8841463414634146
+   },
+   {
+    "k": 4,
+    "mean_all_detectors": 0.6249043480588305,
+    "mean_boundary_adjacent": 0.7709731399783125,
+    "mean_not_boundary_adjacent": 0.4058011601796078,
+    "min": 0.3136756019990913,
+    "max": 0.9392689915437836
+   },
+   {
+    "k": 5,
+    "mean_all_detectors": 0.7142997004018078,
+    "mean_boundary_adjacent": 0.8248985105834554,
+    "mean_not_boundary_adjacent": 0.5484014851293361,
+    "min": 0.44975764493129566,
+    "max": 0.9591486716699664
+   },
+   {
+    "k": 6,
+    "mean_all_detectors": 0.7835071950259761,
+    "mean_boundary_adjacent": 0.8717984844715968,
+    "mean_not_boundary_adjacent": 0.651070260857545,
+    "min": 0.5570916697545117,
+    "max": 0.9733890955375742
+   },
+   {
+    "k": 7,
+    "mean_all_detectors": 0.8354817109713146,
+    "mean_boundary_adjacent": 0.9032328986576298,
+    "mean_not_boundary_adjacent": 0.7338549294418414,
+    "min": 0.6488230125827077,
+    "max": 0.9813572295113006
+   },
+   {
+    "k": 8,
+    "mean_all_detectors": 0.8749983127191852,
+    "mean_boundary_adjacent": 0.927680929038321,
+    "mean_not_boundary_adjacent": 0.7959743882404814,
+    "min": 0.7227349937054184,
+    "max": 0.9869531079485452
+   }
+  ],
+  "zero_fired": {
+   "shots": 1000000,
+   "seed": 2026,
+   "zero_fired": 76137,
+   "fraction": 0.076137,
+   "ci95": [
+    0.07561791198353837,
+    0.07665854472201254
+   ],
+   "zero_fired_with_obs_flip": 0,
+   "obs_flip_rate_given_zero_fired": 0.0,
+   "p_no_dem_error_at_all": 0.07578780129248268,
+   "mean_fired_per_shot": 5.132087
+  }
+ }
+}

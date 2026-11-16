@@ -1,0 +1,80 @@
+[MWPM] test LER = 0.0047 (7 errors) on 1500 test shots
+[splits] train 7000 (base 7000 + extra 0), val 1500, test 1500
+[big test] 20000 shots from seed 12347, built in 1.6 s. MWPM LER = 0.00605 (121 errors), decoded in 0.3 s
+  [  A] pos_weight in use = 1.0  | balanced sampler = False
+  [  A] epoch   1/100  train_loss=1.1381  val_loss=0.2960  val_recall=0.000  val_prec=0.000
+  [  A] epoch   2/100  train_loss=0.2651  val_loss=0.2571  val_recall=0.000  val_prec=0.000
+  [  A] epoch   3/100  train_loss=0.2410  val_loss=0.2487  val_recall=0.000  val_prec=0.000
+  [  A] epoch   4/100  train_loss=0.2323  val_loss=0.2490  val_recall=0.000  val_prec=0.000
+  [  A] epoch   5/100  train_loss=0.2384  val_loss=0.2431  val_recall=0.000  val_prec=0.000
+  [  A] epoch   6/100  train_loss=0.2289  val_loss=0.2547  val_recall=0.000  val_prec=0.000
+  [  A] epoch   7/100  train_loss=0.2156  val_loss=0.2228  val_recall=0.000  val_prec=0.000
+  [  A] epoch   8/100  train_loss=0.2053  val_loss=0.1903  val_recall=0.000  val_prec=0.000
+  [  A] epoch   9/100  train_loss=0.1923  val_loss=0.2411  val_recall=0.000  val_prec=0.000
+  [  A] epoch  10/100  train_loss=0.1991  val_loss=0.1810  val_recall=0.000  val_prec=0.000
+  [  A] epoch  11/100  train_loss=0.1942  val_loss=0.2165  val_recall=0.000  val_prec=0.000
+  [  A] epoch  12/100  train_loss=0.1731  val_loss=0.1696  val_recall=0.000  val_prec=0.000
+  [  A] epoch  13/100  train_loss=0.1635  val_loss=0.1678  val_recall=0.000  val_prec=0.000
+  [  A] epoch  14/100  train_loss=0.1638  val_loss=0.1747  val_recall=0.000  val_prec=0.000
+  [  A] epoch  15/100  train_loss=0.1658  val_loss=0.1664  val_recall=0.000  val_prec=0.000
+  [  A] epoch  16/100  train_loss=0.1602  val_loss=0.1637  val_recall=0.000  val_prec=0.000
+  [  A] epoch  17/100  train_loss=0.1602  val_loss=0.1542  val_recall=0.072  val_prec=0.571
+  [  A] epoch  18/100  train_loss=0.1609  val_loss=0.1511  val_recall=0.000  val_prec=0.000
+  [  A] epoch  19/100  train_loss=0.1511  val_loss=0.1615  val_recall=0.532  val_prec=0.596
+  [  A] epoch  20/100  train_loss=0.1442  val_loss=0.1612  val_recall=0.171  val_prec=0.633
+  [  A] epoch  21/100  train_loss=0.1385  val_loss=0.1321  val_recall=0.081  val_prec=0.474
+  [  A] epoch  22/100  train_loss=0.1279  val_loss=0.1345  val_recall=0.135  val_prec=0.750
+  [  A] epoch  23/100  train_loss=0.1330  val_loss=0.2020  val_recall=0.117  val_prec=1.000
+  [  A] epoch  24/100  train_loss=0.1434  val_loss=0.1204  val_recall=0.414  val_prec=0.590
+  [  A] epoch  25/100  train_loss=0.1231  val_loss=0.1135  val_recall=0.441  val_prec=0.700
+  [  A] epoch  26/100  train_loss=0.1207  val_loss=0.1088  val_recall=0.541  val_prec=0.706
+  [  A] epoch  27/100  train_loss=0.1232  val_loss=0.1142  val_recall=0.261  val_prec=0.630
+  [  A] epoch  28/100  train_loss=0.1198  val_loss=0.1070  val_recall=0.387  val_prec=0.662
+  [  A] epoch  29/100  train_loss=0.1156  val_loss=0.1127  val_recall=0.297  val_prec=0.786
+  [  A] epoch  30/100  train_loss=0.1237  val_loss=0.1111  val_recall=0.441  val_prec=0.803
+  [  A] epoch  31/100  train_loss=0.1099  val_loss=0.1590  val_recall=0.027  val_prec=0.750
+  [  A] epoch  32/100  train_loss=0.1057  val_loss=0.0816  val_recall=0.730  val_prec=0.835
+  [  A] epoch  33/100  train_loss=0.0930  val_loss=0.0820  val_recall=0.514  val_prec=0.966
+  [  A] epoch  34/100  train_loss=0.0765  val_loss=0.0660  val_recall=0.793  val_prec=0.907
+  [  A] epoch  35/100  train_loss=0.1333  val_loss=0.2200  val_recall=0.027  val_prec=1.000
+  [  A] epoch  36/100  train_loss=0.1800  val_loss=0.1241  val_recall=0.333  val_prec=0.771
+  [  A] epoch  37/100  train_loss=0.1220  val_loss=0.1073  val_recall=0.288  val_prec=0.970
+  [  A] epoch  38/100  train_loss=0.1005  val_loss=0.0729  val_recall=0.766  val_prec=0.859
+  [  A] epoch  39/100  train_loss=0.0757  val_loss=0.0588  val_recall=0.775  val_prec=0.989
+  [  A] epoch  40/100  train_loss=0.0587  val_loss=0.0496  val_recall=0.802  val_prec=0.967
+  [  A] epoch  41/100  train_loss=0.0746  val_loss=0.0525  val_recall=0.829  val_prec=0.968
+  [  A] epoch  42/100  train_loss=0.0606  val_loss=0.0503  val_recall=0.802  val_prec=0.989
+  [  A] epoch  43/100  train_loss=0.1141  val_loss=0.1511  val_recall=0.009  val_prec=1.000
+  [  A] epoch  44/100  train_loss=0.0966  val_loss=0.0562  val_recall=0.784  val_prec=0.967
+  [  A] epoch  45/100  train_loss=0.0542  val_loss=0.0495  val_recall=0.784  val_prec=0.989
+  [  A] epoch  46/100  train_loss=0.0493  val_loss=0.0479  val_recall=0.793  val_prec=1.000
+  [  A] epoch  47/100  train_loss=0.0560  val_loss=0.0412  val_recall=0.802  val_prec=0.989
+  [  A] epoch  48/100  train_loss=0.0475  val_loss=0.0538  val_recall=0.766  val_prec=0.977
+  [  A] epoch  49/100  train_loss=0.0473  val_loss=0.0708  val_recall=0.441  val_prec=0.980
+  [  A] epoch  50/100  train_loss=0.0527  val_loss=0.0387  val_recall=0.802  val_prec=0.989
+  [  A] epoch  51/100  train_loss=0.0447  val_loss=0.0406  val_recall=0.811  val_prec=0.989
+  [  A] epoch  52/100  train_loss=0.0464  val_loss=0.0408  val_recall=0.802  val_prec=0.989
+  [  A] epoch  53/100  train_loss=0.0453  val_loss=0.0438  val_recall=0.784  val_prec=1.000
+  [  A] epoch  54/100  train_loss=0.0432  val_loss=0.0437  val_recall=0.811  val_prec=0.968
+  [  A] epoch  55/100  train_loss=0.0455  val_loss=0.0459  val_recall=0.802  val_prec=0.978
+  [  A] epoch  56/100  train_loss=0.0557  val_loss=0.0427  val_recall=0.793  val_prec=1.000
+  [  A] epoch  57/100  train_loss=0.0452  val_loss=0.0395  val_recall=0.811  val_prec=1.000
+  [  A] epoch  58/100  train_loss=0.0449  val_loss=0.0366  val_recall=0.820  val_prec=1.000
+  [  A] epoch  59/100  train_loss=0.0435  val_loss=0.0441  val_recall=0.820  val_prec=1.000
+  [  A] epoch  60/100  train_loss=0.0437  val_loss=0.0403  val_recall=0.820  val_prec=0.968
+  [  A] epoch  61/100  train_loss=0.0414  val_loss=0.0428  val_recall=0.802  val_prec=0.989
+  [  A] epoch  62/100  train_loss=0.0428  val_loss=0.0573  val_recall=0.766  val_prec=1.000
+  [  A] epoch  63/100  train_loss=0.0441  val_loss=0.2413  val_recall=0.820  val_prec=0.484
+  [  A] epoch  64/100  train_loss=0.0680  val_loss=0.0414  val_recall=0.811  val_prec=0.978
+  [  A] epoch  65/100  train_loss=0.0436  val_loss=0.0371  val_recall=0.829  val_prec=0.989
+  [  A] epoch  66/100  train_loss=0.0456  val_loss=0.0366  val_recall=0.829  val_prec=0.989
+  [  A] epoch  67/100  train_loss=0.0427  val_loss=0.0412  val_recall=0.820  val_prec=0.989
+  [  A] epoch  68/100  train_loss=0.0411  val_loss=0.0411  val_recall=0.802  val_prec=0.989
+  [  A] early stop at epoch 68 (no val-loss improvement for 10).
+[A] test LER = 0.0140 +/- 0.0000 over 1 seeds
+[McNemar A vs MWPM, seed 0] p = 0.0001221
+[big test] [A] LER = 0.01330 (266 errors), seed 0
+[McNemar A vs MWPM, big test, seed 0] p = 8.832e-29
+
+Wrote analysis\phase2_results\d3_C0\run_20261116T063817Z_d3_p0.003.json
+This file is now the source of truth: it carries its own git commit, config, seeds, and library versions. The number cannot exist without them.

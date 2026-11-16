@@ -1,0 +1,66 @@
+{
+ "d3": {
+  "components": {
+   "0": {
+    "detectors": 16,
+    "detector_rounds_t": [
+     0.0,
+     1.0,
+     2.0,
+     3.0
+    ],
+    "edges_incl_boundary": 55,
+    "obs_flipping_edges": 8,
+    "mean_fired_per_shot": 0.509802,
+    "frac_shots_with_a_fired_detector": 0.282911
+   },
+   "1": {
+    "detectors": 8,
+    "detector_rounds_t": [
+     1.0,
+     2.0
+    ],
+    "edges_incl_boundary": 23,
+    "obs_flipping_edges": 0,
+    "mean_fired_per_shot": 0.351527,
+    "frac_shots_with_a_fired_detector": 0.240817
+   }
+  },
+  "frac_shots_fired_in_both_components": 0.122514,
+  "obs_flip_rate": 0.065005
+ },
+ "d5": {
+  "components": {
+   "0": {
+    "detectors": 72,
+    "detector_rounds_t": [
+     0.0,
+     1.0,
+     2.0,
+     3.0,
+     4.0,
+     5.0
+    ],
+    "edges_incl_boundary": 301,
+    "obs_flipping_edges": 18,
+    "mean_fired_per_shot": 2.763723,
+    "frac_shots_with_a_fired_detector": 0.802514
+   },
+   "1": {
+    "detectors": 48,
+    "detector_rounds_t": [
+     1.0,
+     2.0,
+     3.0,
+     4.0
+    ],
+    "edges_incl_boundary": 201,
+    "obs_flipping_edges": 0,
+    "mean_fired_per_shot": 2.368364,
+    "frac_shots_with_a_fired_detector": 0.789221
+   }
+  },
+  "frac_shots_fired_in_both_components": 0.667872,
+  "obs_flip_rate": 0.154576
+ }
+}

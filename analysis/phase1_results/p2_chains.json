@@ -1,0 +1,423 @@
+{
+ "d3": {
+  "d": 3,
+  "p": 0.003,
+  "shots": 200000,
+  "seed": 2026,
+  "dem_error_instructions": 286,
+  "undetectable_components": 0,
+  "mwpm_pred_matches_decode": true,
+  "mwpm_failures": 1335,
+  "mwpm_ler": 0.006675,
+  "failures_with_multiple_odd_loops": 0,
+  "failures_with_zero_odd_loops": 0,
+  "obs_flip_rate": 0.06461,
+  "fired_detectors_per_shot": {
+   "mean": 0.864735,
+   "hist": {
+    "0": 119385,
+    "1": 26184,
+    "2": 32097,
+    "3": 12054,
+    "4": 6788,
+    "5": 2174,
+    "6": 979,
+    "7": 232,
+    "8": 81,
+    "9": 22,
+    "10": 3,
+    "11": 1
+   }
+  },
+  "shot_span_no_boundary": {
+   "mean": 12.30172,
+   "hist": {
+    "0": 145569,
+    "1": 25974,
+    "2": 1783,
+    "3": 1381,
+    "4": 589,
+    "5": 187,
+    "6": 41,
+    ">=12": 24476
+   }
+  },
+  "chains": {
+   "all": {
+    "count": 124841,
+    "edges_hist": {
+     "1": 122499,
+     "2": 2233,
+     "3": 104,
+     "4": 4,
+     "5": 1
+    },
+    "edges_mean": 1.0196810342755986,
+    "detectors_hist": {
+     "1": 75098,
+     "2": 48966,
+     "3": 760,
+     "4": 16,
+     "5": 1
+    },
+    "detectors_mean": 1.4048189296785512,
+    "boundary_edges_hist": {
+     "0": 48136,
+     "1": 76651,
+     "2": 54
+    },
+    "span_no_boundary_hist": {
+     "0": 75098,
+     "1": 49322,
+     "2": 418,
+     "3": 3
+    },
+    "frac_disconnected_without_boundary": 0.0,
+    "span_no_boundary_mean_connected": 0.40184714957425843,
+    "span_with_boundary_hist": {
+     "0": 75098,
+     "1": 49322,
+     "2": 421
+    },
+    "frac_span_le_4": 1.0,
+    "frac_span_le_2": 0.999975969433119,
+    "frac_half_span_le_4": 1.0
+   },
+   "odd": {
+    "count": 17342,
+    "edges_hist": {
+     "1": 16959,
+     "2": 367,
+     "3": 14,
+     "4": 1,
+     "5": 1
+    },
+    "edges_mean": 1.023180717333641,
+    "detectors_hist": {
+     "1": 16959,
+     "2": 371,
+     "3": 10,
+     "4": 1,
+     "5": 1
+    },
+    "detectors_mean": 1.0229500634298236,
+    "boundary_edges_hist": {
+     "1": 17338,
+     "2": 4
+    },
+    "span_no_boundary_hist": {
+     "0": 16959,
+     "1": 375,
+     "2": 8
+    },
+    "frac_disconnected_without_boundary": 0.0,
+    "span_no_boundary_mean_connected": 0.022546419098143235,
+    "span_with_boundary_hist": {
+     "0": 16959,
+     "1": 375,
+     "2": 8
+    },
+    "frac_span_le_4": 1.0,
+    "frac_span_le_2": 1.0,
+    "frac_half_span_le_4": 1.0
+   },
+   "even": {
+    "count": 107499,
+    "edges_hist": {
+     "1": 105540,
+     "2": 1866,
+     "3": 90,
+     "4": 3
+    },
+    "edges_mean": 1.0191164568972735,
+    "detectors_hist": {
+     "1": 58139,
+     "2": 48595,
+     "3": 750,
+     "4": 15
+    },
+    "detectors_mean": 1.4664229434692415,
+    "boundary_edges_hist": {
+     "0": 48136,
+     "1": 59313,
+     "2": 50
+    },
+    "span_no_boundary_hist": {
+     "0": 58139,
+     "1": 48947,
+     "2": 410,
+     "3": 3
+    },
+    "frac_disconnected_without_boundary": 0.0,
+    "span_no_boundary_mean_connected": 0.4630368654592136,
+    "span_with_boundary_hist": {
+     "0": 58139,
+     "1": 48947,
+     "2": 413
+    },
+    "frac_span_le_4": 1.0,
+    "frac_span_le_2": 0.9999720927636536,
+    "frac_half_span_le_4": 1.0
+   }
+  },
+  "mwpm_failure_loops": {
+   "count": 1335,
+   "edges_hist": {
+    "3": 752,
+    "4": 531,
+    "5": 46,
+    "6": 5,
+    "7": 1
+   },
+   "edges_mean": 3.4808988764044946,
+   "detectors_hist": {
+    "2": 752,
+    "3": 531,
+    "4": 46,
+    "5": 6
+   },
+   "detectors_mean": 2.480149812734082,
+   "boundary_edges_hist": {
+    "2": 1335
+   },
+   "span_no_boundary_hist": {
+    "1": 954,
+    "2": 368,
+    "3": 12,
+    "4": 1
+   },
+   "frac_disconnected_without_boundary": 0.0,
+   "span_no_boundary_mean_connected": 1.2958801498127341,
+   "span_with_boundary_hist": {
+    "1": 954,
+    "2": 381
+   },
+   "frac_span_le_4": 1.0,
+   "frac_span_le_2": 0.9902621722846442,
+   "frac_half_span_le_4": 1.0
+  },
+  "diameter_no_boundary_finite": 6,
+  "diameter_with_boundary": 2
+ },
+ "d5": {
+  "d": 5,
+  "p": 0.003,
+  "shots": 200000,
+  "seed": 2026,
+  "dem_error_instructions": 1953,
+  "undetectable_components": 0,
+  "mwpm_pred_matches_decode": true,
+  "mwpm_failures": 650,
+  "mwpm_ler": 0.00325,
+  "failures_with_multiple_odd_loops": 0,
+  "failures_with_zero_odd_loops": 0,
+  "obs_flip_rate": 0.15555,
+  "fired_detectors_per_shot": {
+   "mean": 5.128695,
+   "hist": {
+    "0": 15333,
+    "1": 9209,
+    "2": 25502,
+    "3": 18665,
+    "4": 27188,
+    "5": 20350,
+    "6": 21990,
+    "7": 15998,
+    "8": 14215,
+    "9": 9939,
+    "10": 7642,
+    "11": 5032,
+    "12": 3474,
+    "13": 2117,
+    "14": 1487,
+    "15": 787,
+    ">=16": 1072
+   }
+  },
+  "shot_span_no_boundary": {
+   "mean": 66.531445,
+   "hist": {
+    "0": 24542,
+    "1": 21783,
+    "2": 3227,
+    "3": 5593,
+    "4": 4236,
+    "5": 3303,
+    "6": 2028,
+    "7": 1186,
+    "8": 499,
+    "9": 205,
+    "10": 55,
+    ">=12": 133343
+   }
+  },
+  "chains": {
+   "all": {
+    "count": 636265,
+    "edges_hist": {
+     "1": 617395,
+     "2": 17879,
+     "3": 948,
+     "4": 39,
+     "5": 4
+    },
+    "edges_mean": 1.0312888497717145,
+    "detectors_hist": {
+     "1": 240227,
+     "2": 383690,
+     "3": 11823,
+     "4": 499,
+     "5": 24,
+     "6": 2
+    },
+    "detectors_mean": 1.6427180498691583,
+    "boundary_edges_hist": {
+     "0": 389242,
+     "1": 246817,
+     "2": 206
+    },
+    "span_no_boundary_hist": {
+     "0": 240227,
+     "1": 388306,
+     "2": 7631,
+     "3": 101
+    },
+    "frac_disconnected_without_boundary": 0.0,
+    "span_no_boundary_mean_connected": 0.6347528152577935,
+    "span_with_boundary_hist": {
+     "0": 240227,
+     "1": 388306,
+     "2": 7667,
+     "3": 65
+    },
+    "frac_span_le_4": 1.0,
+    "frac_span_le_2": 0.9998412611097577,
+    "frac_half_span_le_4": 1.0
+   },
+   "odd": {
+    "count": 47614,
+    "edges_hist": {
+     "1": 46386,
+     "2": 1173,
+     "3": 54,
+     "5": 1
+    },
+    "edges_mean": 1.0269878607132357,
+    "detectors_hist": {
+     "1": 46386,
+     "2": 1173,
+     "3": 54,
+     "5": 1
+    },
+    "detectors_mean": 1.0269878607132357,
+    "boundary_edges_hist": {
+     "1": 47614
+    },
+    "span_no_boundary_hist": {
+     "0": 46386,
+     "1": 1193,
+     "2": 34,
+     "3": 1
+    },
+    "frac_disconnected_without_boundary": 0.0,
+    "span_no_boundary_mean_connected": 0.02654681396228,
+    "span_with_boundary_hist": {
+     "0": 46386,
+     "1": 1193,
+     "2": 34,
+     "3": 1
+    },
+    "frac_span_le_4": 1.0,
+    "frac_span_le_2": 0.999978997773764,
+    "frac_half_span_le_4": 1.0
+   },
+   "even": {
+    "count": 588651,
+    "edges_hist": {
+     "1": 571009,
+     "2": 16706,
+     "3": 894,
+     "4": 39,
+     "5": 3
+    },
+    "edges_mean": 1.0316367423142065,
+    "detectors_hist": {
+     "1": 193841,
+     "2": 382517,
+     "3": 11769,
+     "4": 499,
+     "5": 23,
+     "6": 2
+    },
+    "detectors_mean": 1.6925223944238608,
+    "boundary_edges_hist": {
+     "0": 389242,
+     "1": 199203,
+     "2": 206
+    },
+    "span_no_boundary_hist": {
+     "0": 193841,
+     "1": 387113,
+     "2": 7597,
+     "3": 100
+    },
+    "frac_disconnected_without_boundary": 0.0,
+    "span_no_boundary_mean_connected": 0.6839485535572011,
+    "span_with_boundary_hist": {
+     "0": 193841,
+     "1": 387113,
+     "2": 7633,
+     "3": 64
+    },
+    "frac_span_le_4": 1.0,
+    "frac_span_le_2": 0.9998301200541577,
+    "frac_half_span_le_4": 1.0
+   }
+  },
+  "mwpm_failure_loops": {
+   "count": 650,
+   "edges_hist": {
+    "5": 208,
+    "6": 308,
+    "7": 67,
+    "8": 45,
+    "9": 14,
+    "10": 7,
+    "11": 1
+   },
+   "edges_mean": 6.036923076923077,
+   "detectors_hist": {
+    "4": 208,
+    "5": 308,
+    "6": 67,
+    "7": 46,
+    "8": 13,
+    "9": 7,
+    "10": 1
+   },
+   "detectors_mean": 5.035384615384616,
+   "boundary_edges_hist": {
+    "2": 650
+   },
+   "span_no_boundary_hist": {
+    "3": 557,
+    "4": 72,
+    "5": 17,
+    "6": 3,
+    "7": 1
+   },
+   "frac_disconnected_without_boundary": 0.0,
+   "span_no_boundary_mean_connected": 3.183076923076923,
+   "span_with_boundary_hist": {
+    "2": 438,
+    "3": 196,
+    "4": 16
+   },
+   "frac_span_le_4": 0.9676923076923077,
+   "frac_span_le_2": 0.0,
+   "frac_half_span_le_4": 1.0
+  },
+  "diameter_no_boundary_finite": 10,
+  "diameter_with_boundary": 4
+ }
+}

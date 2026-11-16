@@ -1,0 +1,37 @@
+{
+ "C0": {
+  "median_step_s": 0.7488947999954689,
+  "n_params": 78053,
+  "ratio_to_C0": 1.0
+ },
+ "C2 --readout fired": {
+  "median_step_s": 0.7460773499915376,
+  "n_params": 78149,
+  "ratio_to_C0": 0.9962378560994838
+ },
+ "C5 --head mlp": {
+  "median_step_s": 0.7638044000195805,
+  "n_params": 123077,
+  "ratio_to_C0": 1.0199088043129714
+ },
+ "C4 --residual --norm layer": {
+  "median_step_s": 0.784534150006948,
+  "n_params": 78821,
+  "ratio_to_C0": 1.0475892608837647
+ },
+ "C4b --depth 8 --residual --norm layer": {
+  "median_step_s": 1.5008683500054758,
+  "n_params": 156777,
+  "ratio_to_C0": 2.0041110580745873
+ },
+ "C6 --sublattice-types": {
+  "median_step_s": 0.7046214000147302,
+  "n_params": 78533,
+  "ratio_to_C0": 0.9408816832737967
+ },
+ "C3 --boundary per-round": {
+  "median_step_s": 0.7637348500138614,
+  "n_params": 78053,
+  "ratio_to_C0": 1.0198159341184934
+ }
+}
