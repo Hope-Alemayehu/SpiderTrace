@@ -443,3 +443,85 @@ All four runs use the same model, seed 0, up to 100 epochs, and the same 7,500 t
 - **From now on the big test is the headline number.** The 7,500-shot set stays the primary split for continuity and paired comparisons with earlier runs.
 - **More data still helped:** 53 to 37 errors from 600k to 1M on the primary set, paired p = 0.023.
 - **Next:** Run 12, same as Run 11 plus lr decay and gradient clipping.
+
+## Phase 3, S1 (C0 vs C2)
+- **Date:** 2026-11-16
+- **Commit:** 5110582 (clean), branch arch-exploration. Both configs ran back to back in one Kaggle session (same host), torch 2.11.0+cu130.
+- **Where:** Kaggle, GPU
+- **Command (C0):** `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 300000 --arms A --seeds 0 1 --epochs 100 --patience 10 --lr 1e-3 --lr-schedule constant --big-test-shots 200000 --expect-mwpm-errors 36 --device cuda --outdir /kaggle/working/results/C0`
+- **Command (C2):** the same plus `--readout fired`, with `--outdir /kaggle/working/results/C2`.
+- **Setup:** first session of the Phase 3 architecture ablation. GNN-A only, d=5, p=0.003, seeds 0 and 1, up to 100 epochs, patience 10, constant lr 1e-3, no gradient clipping. 300,000 train shots (the 35,000 base train shots plus 265,000 extra shots from extra_train_seed 12346), as in Run 8. Same primary test set as Runs 3 to 11 (`--expect-mwpm-errors 36` passed) and same big test set as Run 11 (200,000 shots, seed 12347, 664 MWPM errors). Not resumed.
+  - C0: default backbone (norm none, add-mean-max readout, linear head), 78,053 parameters.
+  - C2: readout is mean and max over fired detectors only; a shot with no fired detector gets a learned "empty" vector instead. The boundary node is never fired, so it is never pooled. 78,149 parameters.
+- **JSON:** C0 results/run_20261116T154357Z_d5_p0.003.json, C2 results/run_20261116T183801Z_d5_p0.003.json
+- **Analysis:** analysis/phase3_results/phase3_compare.md (from analysis/phase3_compare.py) and analysis/phase3_results/s1_details.json (from analysis/phase3_s1_details.py).
+
+**Big test set (200,000 shots, seed 12347)**
+
+| Config | Seed | Errors | LER | Ratio to MWPM (664 errors) | Fixed vs C0 | Newly wrong vs C0 | McNemar p vs C0 |
+|---|---|---|---|---|---|---|---|
+| MWPM | | 664 | 0.003320 (±0.00013) | 1 | | | |
+| C0 | 0 | 1,348 | 0.006740 (±0.00018) | 2.03 | | | |
+| C0 | 1 | 1,429 | 0.007145 (±0.00019) | 2.15 | | | |
+| C2 | 0 | 1,477 | 0.007385 (±0.00019) | 2.22 | 321 | 450 | 3.8e-6 |
+| C2 | 1 | 1,379 | 0.006895 (±0.00019) | 2.08 | 444 | 394 | 0.090 |
+
+- **Pooled over seeds:** 765 fixed vs 844 newly wrong, p = 0.052. Both seeds are scored on the same shots, so the pooled test overstates significance and is not used for the decision.
+- **McNemar vs MWPM** (A right & MWPM wrong / MWPM right & A wrong): C0 seed 0 184 / 868, p = 1.1e-106; C0 seed 1 189 / 954, p = 2.7e-123; C2 seed 0 178 / 991, p = 3.9e-137; C2 seed 1 204 / 919, p = 9.3e-109.
+- **Decision** (rule fixed before the runs: fewer errors than C0 and p < 0.05 at every seed): **C2 does not beat C0.** At seed 0 it is significantly worse (1,477 vs 1,348 errors, p = 3.8e-6). At seed 1 it has fewer errors (1,379 vs 1,429), but not significantly (p = 0.090).
+- **Seed-to-seed spread within one config** (big test, from test_wrong_idx):
+  - C0 seed 0 vs seed 1: 1,348 vs 1,429 errors, 332 vs 413 of 745 discordant shots, p = 0.0034.
+  - C2 seed 0 vs seed 1: 1,477 vs 1,379 errors, 446 vs 348 of 794 discordant shots, p = 0.00057.
+  - Two trainings of the same config differ about as much as C2 differs from C0.
+
+**Primary test set (7,500 shots)**
+
+| Config | Seed | Test errors | Test LER | Val LER | McNemar vs MWPM (A right & MWPM wrong / MWPM right & A wrong) | McNemar vs C0 (fixed / newly wrong) |
+|---|---|---|---|---|---|---|
+| MWPM | | 36 | 0.0048 | n/a | | |
+| C0 | 0 | 58 | 0.0077 | 0.0075 | 10 / 32, p = 0.00094 | |
+| C0 | 1 | 54 | 0.0072 | 0.0067 | 13 / 31, p = 0.0096 | |
+| C2 | 0 | 64 | 0.0085 | 0.0075 | 7 / 35, p = 1.5e-5 | 12 / 18, p = 0.36 |
+| C2 | 1 | 60 | 0.0080 | 0.0069 | 9 / 33, p = 0.00027 | 17 / 23, p = 0.43 |
+
+- **Statistical uncertainty per LER:** about ±0.0010 (7,500 test shots)
+- **Comparison with Run 8** (same settings at seed 0, commit 8ac71cb, torch 2.11.0+cu128): Run 8 made 65 primary errors, C0 seed 0 makes 58; 21 fixed vs 14 newly wrong, p = 0.31.
+
+**Training**
+
+| Config | Seed | epochs_run | best_epoch | Wall time | Val loss, epoch 1 | Val loss, epoch 3 | Val loss, epoch 10 | Best val loss (train loss at that epoch) |
+|---|---|---|---|---|---|---|---|---|
+| C0 | 0 | 69 | 59 | 5,204 s (86.7 min, 75.4 s per epoch) | 0.426 | 0.143 | 0.0401 | 0.0183 (0.0219) |
+| C0 | 1 | 71 | 61 | 5,269 s (87.8 min, 74.2 s per epoch) | 0.390 | 0.104 | 0.0393 | 0.0184 (0.0206) |
+| C2 | 0 | 48 | 38 | 3,534 s (58.9 min, 73.6 s per epoch) | 0.106 | 0.0708 | 0.0379 | 0.0204 (0.0233) |
+| C2 | 1 | 92 | 82 | 6,723 s (112.0 min, 73.1 s per epoch) | 0.134 | 0.0612 | 0.0441 | 0.0177 (0.0197) |
+
+- All four models stopped early (10 epochs without val-loss improvement); none reached the 100-epoch cap.
+- **Loss spikes** (epoch-to-epoch jump above 1.3x in train or val loss):
+  - C0 seed 0: epoch 15, train 0.0390 to 0.0666 (1.71x) and val 0.0313 to 0.0987 (3.15x); epoch 29, val 0.0270 to 0.0369 (1.37x).
+  - C0 seed 1: epoch 35, val 0.0235 to 0.0345 (1.47x). No train-loss spike.
+  - C2 seed 0: epoch 34, val 0.0242 to 0.0324 (1.34x); epoch 40, train 0.0230 to 0.0408 (1.77x) and val 0.0221 to 0.0457 (2.06x).
+  - C2 seed 1: epoch 9, train 0.0403 to 0.1024 (2.54x) and val 0.0359 to 0.0527 (1.47x); epoch 85, train 0.0208 to 0.0362 (1.74x) and val 0.0180 to 0.0284 (1.58x).
+  - Both C2 runs ended right after a spike: best epochs 38 and 82, spikes at 40 and 85, and no later epoch improved on the best val loss. In both C0 runs the last spike (epochs 29 and 35) came more than 20 epochs before the best epoch.
+- **Faster start for C2:**
+  - Epoch-1 val loss is 0.106 and 0.134 for C2, against 0.426 and 0.390 for C0. C0 starts near the trivial 0.44.
+  - First epoch with val loss below 0.05: C2 epochs 7 and 4, C0 epochs 10 and 9.
+  - By epoch 10 the curves are level (C2 0.0379 and 0.0441, C0 0.0401 and 0.0393).
+- **Session time:** C0 started at 12:46 UTC and C2's JSON was written at 18:38 UTC, 5.9 h for both configs. The big test was built in 39.6 s (C0) and 35.9 s (C2). MWPM decoded it in 7.3 s and 9.9 s, and GNN-A scored it in about 28 s per seed.
+
+**Zero-fired shots**
+- Big test: 15,307 of 200,000 shots (7.65%) have no fired detector. None of them has a true flip, and no model predicts a flip on any of them (0 of 15,307 for both seeds of both configs).
+- Primary test set: 567 shots, also 0 true flips and 0 predicted flips for all four models.
+- For C2 the prediction on these shots is a single learned constant (the empty vector through the head); for C0 it comes from the graph with every fired bit 0.
+
+## Interpretation (Phase 3, S1)
+- **Data:**
+  - Fired-only pooling did not help at 300k shots. It is significantly worse at seed 0, better but not significantly at seed 1, and fails the decision rule.
+  - The spread between two seeds of the same config (C0: 1,348 vs 1,429 errors, p = 0.0034) is as large as the C2 vs C0 difference. A per-seed McNemar test compares two trained models, not two architectures. With two seeds, an architecture effect smaller than this spread cannot be told apart from training noise.
+  - C2 learns much faster in the first epochs, but the gap is gone by epoch 10.
+- **Hypotheses, not tested here:**
+  - C2's faster start comes from removing the add pool over 121 mostly unfired nodes. At initialization C2's logit is about -1, against about +147 for C0 (local check, 2026-11-16, not from a run JSON).
+  - C2's poor seed-0 result is partly training instability rather than the readout itself, since the run ended right after its largest spike. The data cannot separate the two.
+- **Phase 1 consistency:** C2 never pools the boundary hub, yet it did not lose clearly. This does not contradict the Phase 1 finding that the label information sits on the hub's edges. The hub is one hop from every detector that has a boundary edge, so its information can still reach the fired nodes through message passing. S1 does not test the hub directly.
+- **Decision:** C2 does not enter the combined config. The `--readout fired` option stays in the code, off by default.
+- **Next:** S2. See the Phase 3 plan; the spikes under constant lr 1e-3 (all four models, one to two each) bear on what to run.

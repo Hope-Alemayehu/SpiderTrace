@@ -1,0 +1,102 @@
+{
+ "mwpm_big_test_errors": 664,
+ "n_big_test": 200000,
+ "seeds": [
+  "0",
+  "1"
+ ],
+ "configs": {
+  "C0": {
+   "flags": {},
+   "commit": "5110582cfece1bff22d3b453f3bc8cb232c2c78e",
+   "n_params": 78053,
+   "per_seed": {
+    "0": {
+     "errors": 1348,
+     "errors_C0": 1348,
+     "ratio_to_mwpm": 2.0301204819277108,
+     "fixed_vs_C0": 0,
+     "newly_wrong_vs_C0": 0,
+     "p": 1.0,
+     "zero_fired": {
+      "n": 15307,
+      "pred_flip": 0,
+      "true_flip": 0
+     },
+     "epochs_run": 69,
+     "best_epoch": 59,
+     "wall_time_s": 5203.746765742
+    },
+    "1": {
+     "errors": 1429,
+     "errors_C0": 1429,
+     "ratio_to_mwpm": 2.1521084337349397,
+     "fixed_vs_C0": 0,
+     "newly_wrong_vs_C0": 0,
+     "p": 1.0,
+     "zero_fired": {
+      "n": 15307,
+      "pred_flip": 0,
+      "true_flip": 0
+     },
+     "epochs_run": 71,
+     "best_epoch": 61,
+     "wall_time_s": 5268.846327082
+    }
+   },
+   "pooled": {
+    "fixed_vs_C0": 0,
+    "newly_wrong_vs_C0": 0,
+    "p": 1.0
+   },
+   "beats_C0_at_every_seed": false
+  },
+  "C2": {
+   "flags": {
+    "readout": "fired"
+   },
+   "commit": "5110582cfece1bff22d3b453f3bc8cb232c2c78e",
+   "n_params": 78149,
+   "per_seed": {
+    "0": {
+     "errors": 1477,
+     "errors_C0": 1348,
+     "ratio_to_mwpm": 2.2243975903614457,
+     "fixed_vs_C0": 321,
+     "newly_wrong_vs_C0": 450,
+     "p": 3.837418870339175e-06,
+     "zero_fired": {
+      "n": 15307,
+      "pred_flip": 0,
+      "true_flip": 0
+     },
+     "epochs_run": 48,
+     "best_epoch": 38,
+     "wall_time_s": 3534.382331164001
+    },
+    "1": {
+     "errors": 1379,
+     "errors_C0": 1429,
+     "ratio_to_mwpm": 2.0768072289156625,
+     "fixed_vs_C0": 444,
+     "newly_wrong_vs_C0": 394,
+     "p": 0.09045717358232956,
+     "zero_fired": {
+      "n": 15307,
+      "pred_flip": 0,
+      "true_flip": 0
+     },
+     "epochs_run": 92,
+     "best_epoch": 82,
+     "wall_time_s": 6722.500709134998
+    }
+   },
+   "pooled": {
+    "fixed_vs_C0": 765,
+    "newly_wrong_vs_C0": 844,
+    "p": 0.05179677462529157
+   },
+   "beats_C0_at_every_seed": false
+  }
+ }
+}
