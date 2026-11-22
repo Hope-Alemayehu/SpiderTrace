@@ -525,3 +525,128 @@ All four runs use the same model, seed 0, up to 100 epochs, and the same 7,500 t
 - **Phase 1 consistency:** C2 never pools the boundary hub, yet it did not lose clearly. This does not contradict the Phase 1 finding that the label information sits on the hub's edges. The hub is one hop from every detector that has a boundary edge, so its information can still reach the fired nodes through message passing. S1 does not test the hub directly.
 - **Decision:** C2 does not enter the combined config. The `--readout fired` option stays in the code, off by default.
 - **Next:** S2. See the Phase 3 plan; the spikes under constant lr 1e-3 (all four models, one to two each) bear on what to run.
+
+## Phase 3, S2 (training recipe)
+- **Date:** 2026-11-17
+- **Where:** Kaggle, GPU, one session, torch 2.11.0+cu130. Three runs back to back: the C0 rerun started at 02:38 UTC, and the C0_recipe JSON was written at 09:52 UTC (7.2 h).
+- **Runs:**
+  - **C0 rerun:** commit 5110582 (clean). Identical command to the S1 C0, outdir `/kaggle/working/results/C0`. The JSON was not downloaded from the Kaggle session. It was recovered from the notebook output, where a `!cat` cell had printed it in full. Its MWPM wrong-shot lists match the S1 runs exactly on both test sets.
+  - **C2 rerun (partial):** identical command to the S1 C2 (`--readout fired`, outdir `/kaggle/working/results/C2`). The commit is 5110582 per the session plan; the log does not print it. The JSON (run_20261117T072706Z) was deleted on Kaggle. Only the printed log survives: per-epoch losses rounded to 4 decimals, the primary-set LER mean over seeds, and big-test errors for seed 0. No test_wrong_idx, so no paired statistics.
+  - **C0_recipe:** commit 9b2a066 (clean). The same command as C0 plus `--lr-schedule cosine --lr-min 1e-5 --grad-clip 1.0`, outdir `/kaggle/working/results/C0_recipe`. 9b2a066 only adds analysis and result files on top of 5110582, so the training code is identical; only the flags differ.
+- **Command (C0_recipe):** `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 300000 --arms A --seeds 0 1 --epochs 100 --patience 10 --lr 1e-3 --lr-schedule cosine --lr-min 1e-5 --grad-clip 1.0 --big-test-shots 200000 --expect-mwpm-errors 36 --device cuda --outdir /kaggle/working/results/C0_recipe`
+- **Setup:** as S1. GNN-A, default backbone (78,053 parameters), d=5, p=0.003, seeds 0 and 1, 300,000 train shots, up to 100 epochs, patience 10, the same primary test set (`--expect-mwpm-errors 36` passed) and the same big test (200,000 shots, seed 12347, 664 MWPM errors). None resumed.
+- **Files:**
+  - C0 rerun: results/run_20261117T044139Z_d5_p0.003.json (recovered from the notebook output)
+  - C0_recipe: results/run_20261117T095238Z_d5_p0.003.json
+  - C2 rerun: analysis/kaggle_logs/c2_rerun_log_20261117T072706Z.txt (log only)
+- **Analysis:** analysis/phase3_results/s2_details.json (from analysis/phase3_s2_details.py). The S1 runs are referred to below as "C0, Nov 16" and "C2, Nov 16".
+
+**Big test set (200,000 shots, seed 12347)**
+
+| Run | Seed | Errors | LER | Ratio to MWPM (664 errors) | McNemar vs MWPM (A right & MWPM wrong / MWPM right & A wrong) |
+|---|---|---|---|---|---|
+| C0, Nov 16 | 0 | 1,348 | 0.006740 | 2.03 | 184 / 868, p = 1.1e-106 |
+| C0, Nov 16 | 1 | 1,429 | 0.007145 | 2.15 | 189 / 954, p = 2.7e-123 |
+| C0 rerun | 0 | 1,647 | 0.008235 | 2.48 | 182 / 1,165, p = 1.1e-175 |
+| C0 rerun | 1 | 1,658 | 0.008290 | 2.50 | 191 / 1,185, p = 2.3e-175 |
+| C0_recipe | 0 | 1,479 | 0.007395 | 2.23 | 192 / 1,007, p = 1.0e-133 |
+| C0_recipe | 1 | 1,206 | 0.006030 | 1.82 | 188 / 730, p = 5.2e-76 |
+| C2 rerun (partial) | 0 | 1,425 | 0.00713 | 2.15 | p = 6.3e-123 (counts not printed) |
+
+- Statistical uncertainty per LER: about ±0.00018 to ±0.00020 (200,000 shots).
+- The C2 rerun log prints the big test for seed 0 only.
+
+**Paired McNemar, C0_recipe vs constant-lr C0, same seed** (fixed = constant-lr C0 wrong and C0_recipe right; newly wrong = the reverse)
+
+| Reference | Seed | Set | Fixed | Newly wrong | Wrong in both | p |
+|---|---|---|---|---|---|---|
+| C0, Nov 16 | 0 | big | 314 | 445 | 1,034 | 2.2e-6 |
+| C0, Nov 16 | 1 | big | 473 | 250 | 956 | 8.6e-17 |
+| C0 rerun | 0 | big | 434 | 266 | 1,213 | 2.3e-10 |
+| C0 rerun | 1 | big | 720 | 268 | 938 | 2.2e-48 |
+| C0, Nov 16 | 0 | primary | 15 | 22 | 43 | 0.32 |
+| C0, Nov 16 | 1 | primary | 19 | 12 | 35 | 0.28 |
+| C0 rerun | 0 | primary | 14 | 15 | 50 | 1.0 |
+| C0 rerun | 1 | primary | 31 | 13 | 34 | 0.0096 |
+
+- Against the Nov 16 C0, C0_recipe is significantly worse at seed 0 and significantly better at seed 1 on the big test.
+- Against the C0 rerun it is significantly better at both seeds.
+- On the primary set, only seed 1 against the C0 rerun is significant.
+
+**Primary test set (7,500 shots, MWPM 36 errors)**
+
+| Run | Seed | Test errors | Test LER | Val LER | McNemar vs MWPM (A right & MWPM wrong / MWPM right & A wrong) |
+|---|---|---|---|---|---|
+| C0, Nov 16 | 0 | 58 | 0.0077 | 0.0075 | 10 / 32, p = 0.00094 |
+| C0, Nov 16 | 1 | 54 | 0.0072 | 0.0067 | 13 / 31, p = 0.0096 |
+| C0 rerun | 0 | 64 | 0.0085 | 0.0085 | 11 / 39, p = 9.0e-5 |
+| C0 rerun | 1 | 65 | 0.0087 | 0.0084 | 12 / 41, p = 8.2e-5 |
+| C0_recipe | 0 | 65 | 0.0087 | 0.0076 | 8 / 37, p = 1.5e-5 |
+| C0_recipe | 1 | 47 | 0.0063 | 0.0063 | 10 / 21, p = 0.071 |
+
+- Statistical uncertainty per LER: about ±0.0010 (7,500 test shots).
+- C2 rerun (partial): test LER 0.0077 ± 0.0007 over 2 seeds as printed (C2, Nov 16: 0.0085 and 0.0080). McNemar vs MWPM at seed 0: p = 1.1e-4 (counts not printed).
+
+**GPU run-to-run nondeterminism (same commit, same command, same seeds)**
+- **C0 rerun vs C0, Nov 16** (fixed = Nov 16 wrong and rerun right):
+  - Seed 0: 1,647 vs 1,348 big-test errors; 301 fixed vs 600 newly wrong, p = 1.2e-23. Primary set: 64 vs 58; 20 vs 26, p = 0.46.
+  - Seed 1: 1,658 vs 1,429 big-test errors; 342 fixed vs 571 newly wrong, p = 3.3e-14. Primary set: 65 vs 54; 16 vs 27, p = 0.13.
+- **C2 rerun vs C2, Nov 16** (partial, no paired statistics): seed 0 has 1,425 vs 1,477 big-test errors. Epochs run are 59 and 74 against 48 and 92.
+- The data, the seed and the code are identical, so the differences come from nondeterministic GPU kernels. The reruns diverge from the first epoch: epoch-1 val loss is 0.4300 vs 0.4263 at seed 0 and 0.3756 vs 0.3902 at seed 1. On the big test, the same-seed reruns differ by 229 to 299 errors. That is more than the C2 vs C0 difference in S1 (129 errors at seed 0, 50 at seed 1).
+- **Seed spread within one run** (big test, seed 0 vs seed 1):
+
+| Run | Seed 0 errors | Seed 1 errors | Only seed 0 wrong | Only seed 1 wrong | p |
+|---|---|---|---|---|---|
+| C0, Nov 16 | 1,348 | 1,429 | 332 | 413 | 0.0034 |
+| C0 rerun | 1,647 | 1,658 | 364 | 375 | 0.71 |
+| C0_recipe | 1,479 | 1,206 | 532 | 259 | 1.5e-22 |
+
+**Training**
+
+| Run | Seed | epochs_run | best_epoch | Wall time | Epoch-1 val loss | Best val loss (train loss at that epoch) | Val spikes (>1.3x) |
+|---|---|---|---|---|---|---|---|
+| C0, Nov 16 | 0 | 69 | 59 | 5,204 s | 0.426 | 0.0183 (0.0219) | epoch 15 (3.15x), epoch 29 (1.37x) |
+| C0, Nov 16 | 1 | 71 | 61 | 5,269 s | 0.390 | 0.0184 (0.0206) | epoch 35 (1.47x) |
+| C0 rerun | 0 | 48 | 38 | 3,538 s | 0.430 | 0.0210 (0.0263) | none |
+| C0 rerun | 1 | 50 | 40 | 3,691 s | 0.376 | 0.0215 (0.0249) | none |
+| C0_recipe | 0 | 48 | 38 | 3,589 s | 0.104 | 0.0189 (0.0219) | none |
+| C0_recipe | 1 | 66 | 56 | 4,951 s | 0.110 | 0.0168 (0.0175) | none |
+| C2, Nov 16 | 0 | 48 | 38 | 3,534 s | 0.106 | 0.0204 (0.0233) | epoch 34 (1.34x), epoch 40 (2.06x) |
+| C2, Nov 16 | 1 | 92 | 82 | 6,723 s | 0.134 | 0.0177 (0.0197) | epoch 9 (1.47x), epoch 85 (1.58x) |
+| C2 rerun (log) | 0 | 59 | 49 | not printed | 0.1199 | 0.0191 | epoch 10 (1.49x), epoch 34 (1.30x) |
+| C2 rerun (log) | 1 | 74 | 64 | not printed | 0.1188 | 0.0177 | epoch 9 (2.01x) |
+
+- All runs stopped early (10 epochs without val-loss improvement). For the C2 rerun, best_epoch is the epoch with the lowest printed val loss.
+- **Train-loss spikes (>1.3x):**
+  - C0 rerun and C0_recipe: none.
+  - C2 rerun: seed 0 epoch 7 (0.0494 to 0.0759, 1.54x); seed 1 epoch 9 (0.0395 to 0.0584, 1.48x) and epoch 69 (0.0197 to 0.0310, 1.57x; val 1.28x, below the threshold).
+  - The Nov 16 runs are listed in the S1 entry.
+- The C2 rerun's seed-0 epoch-34 val spike is 0.0233 to 0.0304 in the printed 4-decimal values, a ratio of 1.305. It is at the threshold within rounding.
+- **Gradient norms** (measured before clipping; 1,172 steps per epoch):
+  - C0_recipe seed 0: epoch 1 mean 32.5, max 9,355, 91.4% of steps clipped. From epoch 2 on, the mean of the per-epoch means is 0.48, the largest norm 13.8, and 7.1% of steps are clipped. The last epoch has 0.9% clipped. Over the whole run, 8.8% of steps are clipped.
+  - C0_recipe seed 1: epoch 1 mean 19.9, max 4,419, 93.3% clipped. From epoch 2 on: mean 0.39, largest norm 35.0, 4.1% clipped. The last epoch has 1.0% clipped. Over the whole run, 5.4% clipped.
+  - C0 rerun, C2 rerun and the Nov 16 runs: not recorded (no --grad-clip).
+- **lr at early stop (C0_recipe):**
+  - Cosine is over the 100-epoch cap, from 1e-3 towards lr_min 1e-5.
+  - Seed 0 stopped at epoch 48 with lr 5.52e-4 (55% of the initial lr); the best epoch 38 ran at 7.02e-4.
+  - Seed 1 stopped at epoch 66 with lr 2.80e-4 (28%); the best epoch 56 ran at 4.28e-4.
+  - The recorded values match the cosine formula. Neither run got near the low-lr end of the schedule, because early stopping ended both before epoch 70.
+
+**Zero-fired shots:** 15,307 big-test shots; 0 true flips and 0 predicted flips for every seed of the C0 rerun and C0_recipe, as in S1.
+
+## Interpretation (Phase 3, S2)
+- **What the recipe changed (data):**
+  - No loss spikes in either C0_recipe seed.
+  - The first epoch is much better: val loss 0.104 and 0.110 against 0.38 to 0.43 for constant-lr C0.
+  - In epoch 1 clipping was active on more than 90% of steps, with gradient norms up to 9,355. After that it clipped 4 to 7% of steps. So the clip mainly tames the very large early gradients. That is consistent with the large initial logits of the unnormalized backbone (about +147 at initialization, local check from Phase 2).
+- **What it did not show (data):**
+  - The C0 rerun at constant lr also had no spikes, so a run without spikes is not by itself evidence for the recipe. Spikes vary from run to run.
+  - The recipe did not narrow the seed spread: 1,479 vs 1,206 errors, p = 1.5e-22, the widest of the three C0 variants.
+  - C0_recipe is better than the C0 rerun at both seeds, but against the Nov 16 C0 it is worse at seed 0 and better at seed 1.
+  - Cosine never reached its low-lr phase, so the recipe tested here is in practice "clip plus a mild lr decay".
+- **Nondeterminism and the decision rule (data, then consequence):**
+  - Rerunning the same commit, command and seed on Kaggle changed big-test errors by 229 to 299, with per-seed McNemar p = 1.2e-23 and 3.3e-14.
+  - A per-seed McNemar test on one pair of runs therefore measures two particular trained models. It cannot attribute a difference to the config, and with differences this large it will find "significant" effects in either direction. The S1 C2 vs C0 comparison (129 and 50 errors) is within this run-to-run noise. The S1 decision on C2 stands as "no evidence of a benefit", not as evidence of harm.
+  - The rule "fewer errors and p < 0.05 at every seed" is not a valid test of a config effect under this noise.
+- **Hypothesis, not tested:** much of the run-to-run spread enters through early stopping. The reruns stopped at different points (C0 rerun at epochs 48 and 50 against 69 and 71) and are scored at different best epochs. A schedule that reaches a low lr before stopping, or a fixed epoch budget without early stopping, might reduce it.
+- **Next:** decide on a new comparison protocol before more ablation sessions. For example: several independent runs per config, comparing big-test error counts across runs rather than shots within one pair, or deterministic GPU training if it can be made to work with the PyG scatter ops.

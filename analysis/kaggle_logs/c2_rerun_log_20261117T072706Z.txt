@@ -1,0 +1,153 @@
+%%bash
+cd /kaggle/working/SpiderTrace
+python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 300000 --arms A --seeds 0 1 --epochs 100 --patience 10 --lr 1e-3 --lr-schedule constant --big-test-shots 200000 --expect-mwpm-errors 36 --device cuda --readout fired --outdir /kaggle/working/results/C2 2>&1 | tee /kaggle/working/results_C2.log
+ls -R /kaggle/working/results
+/usr/local/lib/python3.13/dist-packages/torch_geometric/utils/_scatter.py:91: UserWarning: The usage of `scatter(reduce='max')` can be accelerated via the 'torch-scatter' package, but it was not found
+  warnings.warn(
+[MWPM] test LER = 0.0048 (36 errors) on 7500 test shots
+[splits] train 300000 (base 35000 + extra 265000), val 7500, test 7500
+[big test] 200000 shots from seed 12347, built in 37.8 s. MWPM LER = 0.00332 (664 errors), decoded in 10.3 s
+  [  A] pos_weight in use = 1.0  | balanced sampler = False
+  [  A] epoch   1/100  train_loss=0.2323  val_loss=0.1199  val_recall=0.826  val_prec=0.882
+  [  A] epoch   2/100  train_loss=0.1265  val_loss=0.1173  val_recall=0.801  val_prec=0.907
+  [  A] epoch   3/100  train_loss=0.1049  val_loss=0.0786  val_recall=0.859  val_prec=0.952
+  [  A] epoch   4/100  train_loss=0.0766  val_loss=0.0569  val_recall=0.920  val_prec=0.952
+  [  A] epoch   5/100  train_loss=0.0577  val_loss=0.0502  val_recall=0.922  val_prec=0.968
+  [  A] epoch   6/100  train_loss=0.0494  val_loss=0.0429  val_recall=0.935  val_prec=0.977
+  [  A] epoch   7/100  train_loss=0.0759  val_loss=0.0499  val_recall=0.916  val_prec=0.971
+  [  A] epoch   8/100  train_loss=0.0514  val_loss=0.0381  val_recall=0.939  val_prec=0.982
+  [  A] epoch   9/100  train_loss=0.0441  val_loss=0.0358  val_recall=0.946  val_prec=0.981
+  [  A] epoch  10/100  train_loss=0.0528  val_loss=0.0533  val_recall=0.839  val_prec=0.975
+  [  A] epoch  11/100  train_loss=0.0421  val_loss=0.0343  val_recall=0.946  val_prec=0.978
+  [  A] epoch  12/100  train_loss=0.0382  val_loss=0.0324  val_recall=0.954  val_prec=0.982
+  [  A] epoch  13/100  train_loss=0.0420  val_loss=0.0327  val_recall=0.958  val_prec=0.973
+  [  A] epoch  14/100  train_loss=0.0361  val_loss=0.0316  val_recall=0.953  val_prec=0.982
+  [  A] epoch  15/100  train_loss=0.0348  val_loss=0.0322  val_recall=0.958  val_prec=0.979
+  [  A] epoch  16/100  train_loss=0.0364  val_loss=0.0296  val_recall=0.959  val_prec=0.978
+  [  A] epoch  17/100  train_loss=0.0329  val_loss=0.0289  val_recall=0.963  val_prec=0.979
+  [  A] epoch  18/100  train_loss=0.0320  val_loss=0.0286  val_recall=0.964  val_prec=0.974
+  [  A] epoch  19/100  train_loss=0.0312  val_loss=0.0269  val_recall=0.962  val_prec=0.985
+  [  A] epoch  20/100  train_loss=0.0298  val_loss=0.0287  val_recall=0.961  val_prec=0.975
+  [  A] epoch  21/100  train_loss=0.0309  val_loss=0.0284  val_recall=0.971  val_prec=0.959
+  [  A] epoch  22/100  train_loss=0.0290  val_loss=0.0257  val_recall=0.962  val_prec=0.984
+  [  A] epoch  23/100  train_loss=0.0280  val_loss=0.0242  val_recall=0.966  val_prec=0.984
+  [  A] epoch  24/100  train_loss=0.0281  val_loss=0.0273  val_recall=0.963  val_prec=0.976
+  [  A] epoch  25/100  train_loss=0.0284  val_loss=0.0263  val_recall=0.964  val_prec=0.982
+  [  A] epoch  26/100  train_loss=0.0270  val_loss=0.0236  val_recall=0.970  val_prec=0.978
+  [  A] epoch  27/100  train_loss=0.0266  val_loss=0.0241  val_recall=0.970  val_prec=0.975
+  [  A] epoch  28/100  train_loss=0.0262  val_loss=0.0230  val_recall=0.966  val_prec=0.979
+  [  A] epoch  29/100  train_loss=0.0292  val_loss=0.0264  val_recall=0.967  val_prec=0.977
+  [  A] epoch  30/100  train_loss=0.0259  val_loss=0.0237  val_recall=0.972  val_prec=0.977
+  [  A] epoch  31/100  train_loss=0.0248  val_loss=0.0236  val_recall=0.975  val_prec=0.969
+  [  A] epoch  32/100  train_loss=0.0249  val_loss=0.0227  val_recall=0.977  val_prec=0.969
+  [  A] epoch  33/100  train_loss=0.0248  val_loss=0.0233  val_recall=0.972  val_prec=0.974
+  [  A] epoch  34/100  train_loss=0.0245  val_loss=0.0304  val_recall=0.971  val_prec=0.961
+  [  A] epoch  35/100  train_loss=0.0245  val_loss=0.0228  val_recall=0.969  val_prec=0.980
+  [  A] epoch  36/100  train_loss=0.0242  val_loss=0.0230  val_recall=0.973  val_prec=0.974
+  [  A] epoch  37/100  train_loss=0.0236  val_loss=0.0267  val_recall=0.970  val_prec=0.979
+  [  A] epoch  38/100  train_loss=0.0241  val_loss=0.0233  val_recall=0.982  val_prec=0.965
+  [  A] epoch  39/100  train_loss=0.0233  val_loss=0.0227  val_recall=0.974  val_prec=0.975
+  [  A] epoch  40/100  train_loss=0.0228  val_loss=0.0234  val_recall=0.980  val_prec=0.978
+  [  A] epoch  41/100  train_loss=0.0229  val_loss=0.0203  val_recall=0.980  val_prec=0.979
+  [  A] epoch  42/100  train_loss=0.0229  val_loss=0.0222  val_recall=0.976  val_prec=0.980
+  [  A] epoch  43/100  train_loss=0.0225  val_loss=0.0206  val_recall=0.977  val_prec=0.976
+  [  A] epoch  44/100  train_loss=0.0222  val_loss=0.0211  val_recall=0.976  val_prec=0.975
+  [  A] epoch  45/100  train_loss=0.0225  val_loss=0.0214  val_recall=0.976  val_prec=0.977
+  [  A] epoch  46/100  train_loss=0.0223  val_loss=0.0230  val_recall=0.970  val_prec=0.975
+  [  A] epoch  47/100  train_loss=0.0220  val_loss=0.0209  val_recall=0.976  val_prec=0.973
+  [  A] epoch  48/100  train_loss=0.0216  val_loss=0.0245  val_recall=0.980  val_prec=0.967
+  [  A] epoch  49/100  train_loss=0.0216  val_loss=0.0191  val_recall=0.980  val_prec=0.974
+  [  A] epoch  50/100  train_loss=0.0212  val_loss=0.0221  val_recall=0.976  val_prec=0.976
+  [  A] epoch  51/100  train_loss=0.0211  val_loss=0.0205  val_recall=0.976  val_prec=0.980
+  [  A] epoch  52/100  train_loss=0.0211  val_loss=0.0200  val_recall=0.972  val_prec=0.980
+  [  A] epoch  53/100  train_loss=0.0207  val_loss=0.0215  val_recall=0.978  val_prec=0.981
+  [  A] epoch  54/100  train_loss=0.0207  val_loss=0.0213  val_recall=0.975  val_prec=0.979
+  [  A] epoch  55/100  train_loss=0.0210  val_loss=0.0194  val_recall=0.975  val_prec=0.978
+  [  A] epoch  56/100  train_loss=0.0214  val_loss=0.0193  val_recall=0.981  val_prec=0.972
+  [  A] epoch  57/100  train_loss=0.0203  val_loss=0.0215  val_recall=0.976  val_prec=0.974
+  [  A] epoch  58/100  train_loss=0.0205  val_loss=0.0201  val_recall=0.980  val_prec=0.975
+  [  A] epoch  59/100  train_loss=0.0200  val_loss=0.0198  val_recall=0.980  val_prec=0.977
+  [  A] early stop at epoch 59 (no val-loss improvement for 10).
+  [  A] pos_weight in use = 1.0  | balanced sampler = False
+  [  A] epoch   1/100  train_loss=0.2115  val_loss=0.1188  val_recall=0.827  val_prec=0.883
+  [  A] epoch   2/100  train_loss=0.1050  val_loss=0.0580  val_recall=0.897  val_prec=0.961
+  [  A] epoch   3/100  train_loss=0.0638  val_loss=0.0453  val_recall=0.927  val_prec=0.975
+  [  A] epoch   4/100  train_loss=0.0551  val_loss=0.0491  val_recall=0.909  val_prec=0.983
+  [  A] epoch   5/100  train_loss=0.0521  val_loss=0.0408  val_recall=0.922  val_prec=0.983
+  [  A] epoch   6/100  train_loss=0.0448  val_loss=0.0387  val_recall=0.935  val_prec=0.982
+  [  A] epoch   7/100  train_loss=0.0413  val_loss=0.0362  val_recall=0.944  val_prec=0.982
+  [  A] epoch   8/100  train_loss=0.0395  val_loss=0.0372  val_recall=0.934  val_prec=0.988
+  [  A] epoch   9/100  train_loss=0.0584  val_loss=0.0746  val_recall=0.842  val_prec=0.971
+  [  A] epoch  10/100  train_loss=0.0652  val_loss=0.0513  val_recall=0.891  val_prec=0.982
+  [  A] epoch  11/100  train_loss=0.0514  val_loss=0.0388  val_recall=0.938  val_prec=0.977
+  [  A] epoch  12/100  train_loss=0.0442  val_loss=0.0383  val_recall=0.945  val_prec=0.971
+  [  A] epoch  13/100  train_loss=0.0402  val_loss=0.0362  val_recall=0.957  val_prec=0.975
+  [  A] epoch  14/100  train_loss=0.0385  val_loss=0.0351  val_recall=0.948  val_prec=0.981
+  [  A] epoch  15/100  train_loss=0.0365  val_loss=0.0352  val_recall=0.950  val_prec=0.976
+  [  A] epoch  16/100  train_loss=0.0356  val_loss=0.0315  val_recall=0.954  val_prec=0.978
+  [  A] epoch  17/100  train_loss=0.0348  val_loss=0.0296  val_recall=0.952  val_prec=0.985
+  [  A] epoch  18/100  train_loss=0.0335  val_loss=0.0320  val_recall=0.951  val_prec=0.984
+  [  A] epoch  19/100  train_loss=0.0329  val_loss=0.0306  val_recall=0.959  val_prec=0.973
+  [  A] epoch  20/100  train_loss=0.0318  val_loss=0.0291  val_recall=0.962  val_prec=0.967
+  [  A] epoch  21/100  train_loss=0.0312  val_loss=0.0284  val_recall=0.951  val_prec=0.984
+  [  A] epoch  22/100  train_loss=0.0307  val_loss=0.0284  val_recall=0.958  val_prec=0.980
+  [  A] epoch  23/100  train_loss=0.0301  val_loss=0.0291  val_recall=0.954  val_prec=0.985
+  [  A] epoch  24/100  train_loss=0.0297  val_loss=0.0267  val_recall=0.959  val_prec=0.979
+  [  A] epoch  25/100  train_loss=0.0298  val_loss=0.0264  val_recall=0.959  val_prec=0.984
+  [  A] epoch  26/100  train_loss=0.0281  val_loss=0.0261  val_recall=0.971  val_prec=0.975
+  [  A] epoch  27/100  train_loss=0.0281  val_loss=0.0264  val_recall=0.964  val_prec=0.978
+  [  A] epoch  28/100  train_loss=0.0274  val_loss=0.0252  val_recall=0.963  val_prec=0.985
+  [  A] epoch  29/100  train_loss=0.0271  val_loss=0.0268  val_recall=0.965  val_prec=0.979
+  [  A] epoch  30/100  train_loss=0.0273  val_loss=0.0240  val_recall=0.972  val_prec=0.976
+  [  A] epoch  31/100  train_loss=0.0267  val_loss=0.0251  val_recall=0.963  val_prec=0.984
+  [  A] epoch  32/100  train_loss=0.0260  val_loss=0.0239  val_recall=0.969  val_prec=0.979
+  [  A] epoch  33/100  train_loss=0.0266  val_loss=0.0248  val_recall=0.969  val_prec=0.973
+  [  A] epoch  34/100  train_loss=0.0255  val_loss=0.0280  val_recall=0.968  val_prec=0.975
+  [  A] epoch  35/100  train_loss=0.0253  val_loss=0.0232  val_recall=0.970  val_prec=0.978
+  [  A] epoch  36/100  train_loss=0.0253  val_loss=0.0236  val_recall=0.970  val_prec=0.976
+  [  A] epoch  37/100  train_loss=0.0252  val_loss=0.0231  val_recall=0.965  val_prec=0.984
+  [  A] epoch  38/100  train_loss=0.0246  val_loss=0.0247  val_recall=0.970  val_prec=0.979
+  [  A] epoch  39/100  train_loss=0.0245  val_loss=0.0245  val_recall=0.971  val_prec=0.974
+  [  A] epoch  40/100  train_loss=0.0243  val_loss=0.0235  val_recall=0.972  val_prec=0.980
+  [  A] epoch  41/100  train_loss=0.0238  val_loss=0.0226  val_recall=0.974  val_prec=0.975
+  [  A] epoch  42/100  train_loss=0.0241  val_loss=0.0224  val_recall=0.971  val_prec=0.980
+  [  A] epoch  43/100  train_loss=0.0241  val_loss=0.0216  val_recall=0.973  val_prec=0.977
+  [  A] epoch  44/100  train_loss=0.0233  val_loss=0.0236  val_recall=0.975  val_prec=0.965
+  [  A] epoch  45/100  train_loss=0.0234  val_loss=0.0219  val_recall=0.968  val_prec=0.981
+  [  A] epoch  46/100  train_loss=0.0229  val_loss=0.0213  val_recall=0.973  val_prec=0.979
+  [  A] epoch  47/100  train_loss=0.0228  val_loss=0.0210  val_recall=0.973  val_prec=0.984
+  [  A] epoch  48/100  train_loss=0.0226  val_loss=0.0247  val_recall=0.964  val_prec=0.982
+  [  A] epoch  49/100  train_loss=0.0219  val_loss=0.0209  val_recall=0.977  val_prec=0.974
+  [  A] epoch  50/100  train_loss=0.0226  val_loss=0.0220  val_recall=0.975  val_prec=0.980
+  [  A] epoch  51/100  train_loss=0.0220  val_loss=0.0207  val_recall=0.971  val_prec=0.982
+  [  A] epoch  52/100  train_loss=0.0218  val_loss=0.0204  val_recall=0.981  val_prec=0.972
+  [  A] epoch  53/100  train_loss=0.0217  val_loss=0.0212  val_recall=0.973  val_prec=0.980
+  [  A] epoch  54/100  train_loss=0.0216  val_loss=0.0230  val_recall=0.972  val_prec=0.978
+  [  A] epoch  55/100  train_loss=0.0208  val_loss=0.0210  val_recall=0.973  val_prec=0.977
+  [  A] epoch  56/100  train_loss=0.0210  val_loss=0.0214  val_recall=0.973  val_prec=0.989
+  [  A] epoch  57/100  train_loss=0.0211  val_loss=0.0198  val_recall=0.978  val_prec=0.977
+  [  A] epoch  58/100  train_loss=0.0207  val_loss=0.0200  val_recall=0.980  val_prec=0.971
+  [  A] epoch  59/100  train_loss=0.0209  val_loss=0.0207  val_recall=0.969  val_prec=0.985
+  [  A] epoch  60/100  train_loss=0.0207  val_loss=0.0189  val_recall=0.976  val_prec=0.978
+  [  A] epoch  61/100  train_loss=0.0210  val_loss=0.0231  val_recall=0.965  val_prec=0.977
+  [  A] epoch  62/100  train_loss=0.0209  val_loss=0.0210  val_recall=0.979  val_prec=0.978
+  [  A] epoch  63/100  train_loss=0.0209  val_loss=0.0194  val_recall=0.977  val_prec=0.979
+  [  A] epoch  64/100  train_loss=0.0201  val_loss=0.0177  val_recall=0.978  val_prec=0.985
+  [  A] epoch  65/100  train_loss=0.0203  val_loss=0.0199  val_recall=0.970  val_prec=0.984
+  [  A] epoch  66/100  train_loss=0.0196  val_loss=0.0203  val_recall=0.978  val_prec=0.979
+  [  A] epoch  67/100  train_loss=0.0207  val_loss=0.0186  val_recall=0.974  val_prec=0.982
+  [  A] epoch  68/100  train_loss=0.0197  val_loss=0.0195  val_recall=0.978  val_prec=0.977
+  [  A] epoch  69/100  train_loss=0.0310  val_loss=0.0250  val_recall=0.970  val_prec=0.971
+  [  A] epoch  70/100  train_loss=0.0247  val_loss=0.0228  val_recall=0.973  val_prec=0.979
+  [  A] epoch  71/100  train_loss=0.0223  val_loss=0.0220  val_recall=0.972  val_prec=0.975
+  [  A] epoch  72/100  train_loss=0.0207  val_loss=0.0195  val_recall=0.977  val_prec=0.976
+  [  A] epoch  73/100  train_loss=0.0196  val_loss=0.0200  val_recall=0.981  val_prec=0.972
+  [  A] epoch  74/100  train_loss=0.0196  val_loss=0.0198  val_recall=0.973  val_prec=0.980
+  [  A] early stop at epoch 74 (no val-loss improvement for 10).
+[A] test LER = 0.0077 +/- 0.0007 over 2 seeds
+[McNemar A vs MWPM, seed 0] p = 0.0001122
+[big test] [A] LER = 0.00713 (1425 errors), seed 0
+[McNemar A vs MWPM, big test, seed 0] p = 6.348e-123
+
+Wrote /kaggle/working/results/C2/run_20261117T072706Z_d5_p0.003.json
+This file is now the source of truth: it carries its own git commit, config, seeds, and library versions. The number cannot exist without them.
