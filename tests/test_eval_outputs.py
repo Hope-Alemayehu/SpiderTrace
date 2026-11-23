@@ -129,7 +129,8 @@ def test_correlated_matching_uses_correlations():
 
 # ---- --eval-set --------------------------------------------------------------------
 def test_eval_set_rebuilds_the_same_shots(eval_file):
-    loaded, meta, _ = qec_run.read_eval_set(eval_file, D, P)
+    loaded, meta, _, checks = qec_run.read_eval_set(eval_file, D, P)
+    assert all(checks.values()), checks       # same machine: strict fingerprint too
     fresh = qec_run._fresh_shots(D, P, N_BIG, SEED)
     assert meta["n_shots"] == N_BIG and meta["seed"] == SEED and meta["note"] == "test"
     assert len(loaded) == len(fresh)
@@ -182,6 +183,50 @@ def test_eval_set_corrupted_bits_fail_loudly(eval_file, tmp_path):
         qec_run.load_eval_set_arrays(bad, D, P)
 
 
+def test_fingerprint_mismatch_only_warns_when_content_checks_pass(eval_file, tmp_path,
+                                                                  capsys):
+    """A different str(dem) fingerprint (platform rounding of the printed
+    probabilities) is tolerated, with a warning, when the bits and MWPM match."""
+    other = _rewrite(eval_file, tmp_path / "fp.npz", dem_sha256="0" * 64)
+    with pytest.warns(UserWarning, match="strict DEM fingerprint"):
+        dets, _, _, meta, _, checks = qec_run.load_eval_set_arrays(other, D, P)
+    assert checks == {"format_d_p_shots": True, "dem_fingerprint": False,
+                      "bits_consistent": True, "mwpm_reproduced": True}
+    assert len(dets) == N_BIG
+    out = capsys.readouterr().out
+    assert "dem_fingerprint FAIL" in out and "mwpm_reproduced pass" in out
+
+
+@pytest.mark.parametrize("break_what", ["mwpm", "bits"])
+def test_fingerprint_mismatch_with_failed_content_check_still_fails(
+        break_what, eval_file, tmp_path, recwarn):
+    with np.load(eval_file) as z:
+        n = int(json.loads(str(z["meta"]))["mwpm_n_errors"])
+        dets = z["detectors"].copy()
+    dets[0, 0] ^= 1
+    change = {"mwpm_n_errors": n + 1} if break_what == "mwpm" else {"detectors": dets}
+    bad = _rewrite(eval_file, tmp_path / "both.npz", dem_sha256="0" * 64, **change)
+    with pytest.raises(RuntimeError, match="strict DEM fingerprint also differs"):
+        qec_run.load_eval_set_arrays(bad, D, P)
+    assert not [w for w in recwarn if "loading anyway" in str(w.message)]
+
+
+CANONICAL = Path(ROOT) / "data" / "eval_d5_p0.003_seed12347_200k.npz"
+
+
+@pytest.mark.skipif(not CANONICAL.exists(), reason="canonical eval set not present")
+def test_canonical_eval_set_loads():
+    """The committed big test set (Kaggle Linux, MWPM 664) passes the content checks
+    on any platform; the strict fingerprint may differ off Linux (warning only)."""
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        dets, obs, errs, meta, sha, checks = qec_run.load_eval_set_arrays(CANONICAL, 5, 0.003)
+    assert sha == "4b9504da61a4404c3a07bed770cb33c6568a8c014f45d20562e6d5fabc292772"
+    assert checks["bits_consistent"] and checks["mwpm_reproduced"]
+    assert (meta["n_shots"], meta["seed"], meta["mwpm_n_errors"]) == (200000, 12347, 664)
+
+
 def test_eval_set_wrong_code_rejected(eval_file):
     with pytest.raises(RuntimeError, match="is for d=3"):
         qec_run.load_eval_set_arrays(eval_file, 5, P)
@@ -210,7 +255,7 @@ def test_export_script_writes_a_verified_file(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["export_eval_set.py", "--d", "3", "--p", "0.01",
                                       "--shots", "500", "--out", str(out)])
     export_eval_set.main()
-    dets, obs, errs, meta, _ = qec_run.load_eval_set_arrays(out, D, P)
+    dets, obs, errs, meta, _, _ = qec_run.load_eval_set_arrays(out, D, P)
     assert meta["seed"] == SEED and len(dets) == 500
     assert meta["provenance"]["library_versions"]["stim"]
     assert "git_commit" in meta["provenance"]

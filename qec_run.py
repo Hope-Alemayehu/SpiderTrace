@@ -415,19 +415,29 @@ def write_eval_set(path, d, p, n, seed, extra_meta=None):
 
 def read_eval_set(path, d, p):
     """Load and verify a stored eval set (see load_eval_set_arrays), then build its
-    shots as PyG graphs. Returns (shots, meta, file_sha256)."""
-    dets, obs, errs, meta, file_sha = load_eval_set_arrays(path, d, p)
-    return _shots_from_samples(d, p, dets, obs, errs), meta, file_sha
+    shots as PyG graphs. Returns (shots, meta, file_sha256, checks)."""
+    dets, obs, errs, meta, file_sha, checks = load_eval_set_arrays(path, d, p)
+    return _shots_from_samples(d, p, dets, obs, errs), meta, file_sha, checks
 
 
 def load_eval_set_arrays(path, d, p):
     """Load a stored eval set for (d, p) and verify it, without torch.
-    Returns (dets, obs, errs, meta, file_sha256), arrays as bool.
+    Returns (dets, obs, errs, meta, file_sha256, checks), arrays as bool, checks a
+    dict of check name -> passed.
 
-    Fails loudly unless: the format and (d, p) match, the sampling DEM is the same
-    circuit (sha256), the detector bits are the effect of the stored errors, and plain
-    MWPM on the stored shots reproduces the stored MWPM error count and wrong shots.
+    Fails loudly unless: the format, (d, p) and shot count match, the detector and
+    observable bits are the effect of the stored errors under this code's DEM, and
+    plain MWPM on the stored shots reproduces the stored MWPM error count and wrong
+    shots.
+
+    The strict DEM fingerprint (sha256 of str(dem)) is checked too, but a mismatch
+    is only a warning when both content checks pass: str(dem) prints every
+    probability to full float precision, and the last digits differ between
+    platforms (the canonical file, exported on Kaggle Linux, fails it on Windows at
+    the same commit and stim version while every other check passes). The bit check
+    already pins the DEM's mechanisms, their order and their targets.
     """
+    import warnings
     import hashlib
     path = Path(path)
     file_sha = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -444,19 +454,36 @@ def load_eval_set_arrays(path, d, p):
         errs = unpack(z["errors"], meta["num_errors"])
         obs = z["observables"].astype(bool)
         stored_wrong = z["mwpm_wrong_idx"]
-    if meta["dem_sha256"] != _dem_sha256(d, p):
-        raise RuntimeError(f"{path} was sampled from a different DEM than this code "
-                           "builds for (d, p). Re-export it with this commit.")
     if len(dets) != meta["n_shots"]:
         raise RuntimeError(f"{path}: {len(dets)} shots stored, header says {meta['n_shots']}.")
-    _check_samples_consistent(d, p, dets, obs, errs)
+    checks = {"format_d_p_shots": True,
+              "dem_fingerprint": meta["dem_sha256"] == _dem_sha256(d, p)}
+    failures = []
+    try:
+        _check_samples_consistent(d, p, dets, obs, errs)
+        checks["bits_consistent"] = True
+    except (RuntimeError, ValueError) as e:   # ValueError: DEM shape differs
+        checks["bits_consistent"] = False
+        failures.append(f"eval set is inconsistent with this code's DEM ({e})")
     wrong = _mwpm_wrong_from_samples(d, p, dets, obs)
-    if wrong.size != meta["mwpm_n_errors"] or not np.array_equal(wrong, stored_wrong):
-        raise RuntimeError(
+    checks["mwpm_reproduced"] = bool(wrong.size == meta["mwpm_n_errors"]
+                                     and np.array_equal(wrong, stored_wrong))
+    if not checks["mwpm_reproduced"]:
+        failures.append(
             f"MWPM on the stored eval set makes {wrong.size} errors, the file records "
-            f"{meta['mwpm_n_errors']}. The decoder or the file differs from export time; "
-            "refusing to score against it.")
-    return dets, obs, errs, meta, file_sha
+            f"{meta['mwpm_n_errors']}; the decoder or the file differs from export time")
+    print(f"[eval set] checks on {path.name}: " + ", ".join(
+        f"{k} {'pass' if v else 'FAIL'}" for k, v in checks.items()))
+    if failures:
+        if not checks["dem_fingerprint"]:
+            failures.append("the strict DEM fingerprint also differs")
+        raise RuntimeError(f"{path}: refusing to score against it: " + "; ".join(failures))
+    if not checks["dem_fingerprint"]:
+        warnings.warn(
+            f"{path}: the strict DEM fingerprint (sha256 of str(dem)) differs from this "
+            "machine's, but the bit-consistency and MWPM checks both pass. Treated as "
+            "platform rounding in the printed probabilities; loading anyway.")
+    return dets, obs, errs, meta, file_sha, checks
 
 
 def _make_base_datasets(d, p, shots, split_seed, val_frac=0.15, test_frac=0.15):
@@ -1452,7 +1479,7 @@ def main():
     eval_set_record = None
     if args.eval_set is not None:
         t0 = time.perf_counter()
-        big_ds, es_meta, es_sha = read_eval_set(args.eval_set, args.d, args.p)
+        big_ds, es_meta, es_sha, es_checks = read_eval_set(args.eval_set, args.d, args.p)
         gen_s = time.perf_counter() - t0
         big_seed = es_meta["seed"]
         extra_seed = resolve_extra_train_seed(args.split_seed, args.extra_train_seed)
@@ -1461,7 +1488,8 @@ def main():
                 f"--eval-set was sampled with seed {big_seed}, which equals the split "
                 f"seed ({args.split_seed}) or the extra-train seed ({extra_seed}): it "
                 "would repeat train or test shots.")
-        eval_set_record = {"path": str(args.eval_set), "sha256": es_sha, "meta": es_meta}
+        eval_set_record = {"path": str(args.eval_set), "sha256": es_sha,
+                           "checks": es_checks, "meta": es_meta}
         print(f"[eval set] loaded {len(big_ds)} shots (seed {big_seed}) from "
               f"{args.eval_set}; MWPM check passed ({es_meta['mwpm_n_errors']} errors)")
     elif args.big_test_shots is not None:

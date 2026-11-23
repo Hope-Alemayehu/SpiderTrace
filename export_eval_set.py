@@ -68,8 +68,9 @@ def main():
     # Read it back through the checks qec_run --eval-set runs (DEM fingerprint,
     # detector/error consistency, MWPM error count), so an unusable file is never
     # left behind silently. Building the PyG graphs is the only step skipped here.
-    dets, obs, errs, meta2, sha = qec_run.load_eval_set_arrays(out, args.d, args.p)
+    dets, obs, errs, meta2, sha, checks = qec_run.load_eval_set_arrays(out, args.d, args.p)
     assert len(dets) == args.shots and meta2 == meta
+    assert all(checks.values()), checks      # same machine: even the strict fingerprint
     print(json.dumps({k: v for k, v in meta.items() if k != "provenance"}, indent=1))
     print(f"commit {prov['git_commit']} (dirty: {prov['git_dirty']}), "
           f"platform {prov['platform']}, stim {prov['library_versions']['stim']}")

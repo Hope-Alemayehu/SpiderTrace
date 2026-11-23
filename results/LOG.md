@@ -796,3 +796,31 @@ All four runs use the same model, seed 0, up to 100 epochs, and the same 7,500 t
   - The C4 gain comes from LayerNorm controlling the large activations of the unnormalized backbone, rather than from the residual connections. The gradient norms above do not support a simple version of this (C4's are larger), so it needs the two parts ablated separately.
   - C4 at 300k matching Run 11 at 1M suggests the architecture and recipe are worth at least as much as a 3.3x data increase here. Run 11 is one run under the old recipe, so this is a lead, not a result.
 - **Next:** adopt recipe v2 and C4 as the new baseline; ablate residual and LayerNorm separately (3 runs each); one same-seed rerun under recipe v2 to measure its nondeterminism; then C4 at 1M shots.
+
+## 2026-11-23: canonical stored eval set and the correlated-matching baseline (no training)
+- **Why:** stim's seeded sampling is not portable across platforms. The same seed and stim version gave different big-test shots on Windows (MWPM 690 errors) and on Kaggle Linux (664). The canonical big test is therefore stored once and loaded with `--eval-set`.
+- **File:** data/eval_d5_p0.003_seed12347_200k.npz (2,325,806 bytes). sha256 `4b9504da61a4404c3a07bed770cb33c6568a8c014f45d20562e6d5fabc292772`.
+- **Provenance (file header):**
+  - Exported with `export_eval_set.py` on Kaggle Linux (Linux-6.18.55+-x86_64-with-glibc2.39), 2026-11-23 12:41 UTC.
+  - Commit 73a2e41 (clean), stim 1.16.0, pymatching 2.4.0.
+  - d=5, p=0.003, rounds 5, 200,000 shots, sampler seed 12347, sampled in chunks of 10,000, exactly as `--big-test-shots 200000`. 120 detectors, 1,677 DEM errors.
+- **Same shots as the earlier big tests:** MWPM's wrong-shot list on the stored shots is identical to the big-test MWPM list in the Phase 3 S3 JSONs (C0 and C4, recipe v2). Paired comparisons between this file and runs since Run 11 are valid.
+- **MWPM:** 664 errors (LER 0.00332), stored in the file and reproduced on Windows with identical wrong shots.
+- **Correlated matching:** 475 errors (LER 0.002375), 0.715x MWPM. This is PyMatching 2.4.0's two-pass correlated matching on the decomposed DEM, with `enable_correlations=True` set on both the Matching and the decode. Paired with MWPM: it fixes 350 of MWPM's errors and adds 161 new ones, p = 4e-17. Decoded on Windows. Future Kaggle runs record it themselves in the `correlated_matching` block.
+- **C4 and C0 (recipe v2, S3) against correlated matching** (paired, same shots):
+
+| Run | Seed | Errors | Ratio to correlated matching (475) | GNN right & corr wrong / corr right & GNN wrong | p |
+|---|---|---|---|---|---|
+| C4 | 0 | 968 | 2.04 | 186 / 679 | 1.3e-66 |
+| C4 | 1 | 972 | 2.05 | 197 / 694 | 1.5e-65 |
+| C4 | 2 | 986 | 2.08 | 175 / 686 | 3.6e-72 |
+| C0 | 0 | 1,272 | 2.68 | 192 / 989 | 1.1e-129 |
+| C0 | 1 | 1,249 | 2.63 | 199 / 973 | 9.2e-123 |
+| C0 | 2 | 1,184 | 2.49 | 198 / 907 | 7.8e-109 |
+
+- **Loader check on Windows:** `--eval-set` loading first failed on this Windows machine at the strict DEM fingerprint check. The file records sha256 `a48a3ea9...` of `str(dem)` on Kaggle Linux; Windows builds `cf79d2f6...` from the same commit and stim version. Every other check passes here:
+  - the stored detector and observable bits are exactly the effect of the stored errors under the Windows DEM, so all 1,677 mechanisms have the same order and targets;
+  - MWPM reproduces 664 errors with identical wrong shots.
+  - So the difference is in the printed probability digits (`str(dem)` prints full float precision, for example `0.0075628575999998`), most likely last-digit rounding differences between platforms. This is not confirmed: the file stores only the hash.
+  - **Loader change:** a fingerprint mismatch is now a warning, not a failure, but only when the bit-consistency and MWPM checks both pass. If either fails, loading still fails, and the error says the fingerprint also differs. The loader prints each check's result, and runs record them in `big_test.eval_set.checks`. On Windows the canonical file now loads with `dem_fingerprint FAIL` (warning) and the three other checks passing.
+- **From now on:** every run uses `--eval-set data/eval_d5_p0.003_seed12347_200k.npz` in place of `--big-test-shots 200000`.
