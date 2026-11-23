@@ -125,6 +125,13 @@ def compute_aux_class_weights(train_ds, aux_key, num_qubits, qubit_idx=None,
         if qubit_idx is not None:
             idx = idx[qubit_idx]
         counts += np.bincount(idx, minlength=4)
+    return aux_class_weights_from_counts(counts)
+
+
+def aux_class_weights_from_counts(counts):
+    """The inv-freq weights and frequencies of compute_aux_class_weights, from the
+    Pauli class counts (I, X, Y, Z). Shared with the --fresh-train path."""
+    counts = np.asarray(counts, dtype=np.int64)
     total = int(counts.sum())
     freq = counts / max(total, 1)
     # A class absent from the training split is treated as if it occurred once,
@@ -621,7 +628,12 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
                   "loaded its weights from the checkpoint")
             return model, done["train_info"]
 
-    train_loader = DataLoader(train_ds, batch_size=hparam_batch_size(), shuffle=True)
+    if hasattr(train_ds, "set_fresh_epoch"):
+        # --fresh-train: a fresh_data.FreshTrainSource yields its own batches,
+        # new shots every epoch (train_model tells it the epoch).
+        train_loader = train_ds
+    else:
+        train_loader = DataLoader(train_ds, batch_size=hparam_batch_size(), shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=hparam_batch_size(), shuffle=False)
 
     config = {
@@ -953,7 +965,7 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
             train_shots=None, extra_train_seed=None,
             norm="none", readout="add-mean-max", checkpoint=None, big_test_ds=None,
             train_opts=None, head="linear", residual=False, depth=None,
-            boundary="global", sublattice_types=False):
+            boundary="global", sublattice_types=False, fresh=None):
     """Run one arm across all seeds, sweeping lambda per seed (Option A) and
     selecting best-by-validation. Returns the full grid plus the selected-lambda
     test results, and keeps the per-example correctness mask on the shared test set
@@ -1017,12 +1029,29 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     # split_seed, so they are identical across seeds -> compute once per arm.
     # Each arm weights its OWN target's class frequencies: same rule, applied to
     # each arm's own data, which is the fairness that matters here.
+    # fresh = {"n_per_epoch", "seed_base"} with --fresh-train: every model of this
+    # arm trains on the same seed schedule (new shots each epoch) instead of the
+    # fixed training split. Val and test are unchanged.
+    fresh_source = None
+    if fresh is not None:
+        from fresh_data import FreshTrainSource
+        _, val0, _ = make_datasets(d, p, shots, split_seed, **data_args)
+        fresh_source = FreshTrainSource(
+            d, p, fresh["n_per_epoch"], fresh["seed_base"],
+            template=variant([val0[0]])[0], batch_size=hparam_batch_size(),
+            aux_key=AUX_KEY[kind] if kind != "A" else None, chunk=_FRESH_SHOT_CHUNK)
+
     aux_weights = aux_freq = None
     if kind != "A" and aux_class_weight != "none":
-        train_ds0, _, _ = make_datasets(d, p, shots, split_seed, **data_args)
-        aux_weights, aux_freq = compute_aux_class_weights(
-            train_ds0, AUX_KEY[kind], num_qubits, aux_qubits,
-            scheme=aux_class_weight)
+        if fresh_source is not None:
+            # --fresh-train: from epoch 1's fresh shots, the first training data.
+            aux_weights, aux_freq = aux_class_weights_from_counts(
+                fresh_source.class_counts(1, aux_qubits))
+        else:
+            train_ds0, _, _ = make_datasets(d, p, shots, split_seed, **data_args)
+            aux_weights, aux_freq = compute_aux_class_weights(
+                train_ds0, AUX_KEY[kind], num_qubits, aux_qubits,
+                scheme=aux_class_weight)
         print(f"[{kind}] aux class freq (I,X,Y,Z) = "
               f"{[round(f, 4) for f in aux_freq]} -> weights "
               f"{[round(w, 3) for w in aux_weights]}")
@@ -1031,6 +1060,8 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
         # Split is fixed by split_seed, so the test set is identical across arms & seeds.
         train_ds, val_ds, test_ds = (variant(x) for x in
                                      make_datasets(d, p, shots, split_seed, **data_args))
+        if fresh_source is not None:
+            train_ds = fresh_source
 
         best = None  # (val_ler, lambda, test_ler, correct_mask, y_true, aux, model, zf)
         for lam in arm_lambdas:
@@ -1379,6 +1410,17 @@ def main():
                          "--big-test-shots / --big-test-seed. The file is verified on "
                          "load: plain MWPM must reproduce its stored error count. "
                          "Default: off.")
+    ap.add_argument("--fresh-train", action="store_true",
+                    help="train on NEW shots every epoch: epoch e draws --train-shots "
+                         "shots from a sampler seeded with base + e (see "
+                         "--fresh-train-seed). Val and test are unchanged. The seed "
+                         "schedule is recorded in provenance.fresh_train. Requires "
+                         "--train-shots. Default: off (one fixed training split).")
+    ap.add_argument("--fresh-train-seed", type=int, default=None,
+                    help="base of the --fresh-train seed schedule (epoch e uses base + "
+                         "e). Must keep every epoch's seed clear of the split, "
+                         "extra-train, big-test and eval-set seeds. Default: "
+                         "1,000,000 + 1000 * split seed.")
     ap.add_argument("--no-save-models", action="store_true",
                     help="do not write the selected models' best-val weights "
                          "(<run>_weights/) and big-test probabilities "
@@ -1419,12 +1461,50 @@ def main():
             ap.error(f"--big-test-seed {big_seed} must differ from the split seed "
                      f"({args.split_seed}) and the extra-train seed ({extra_seed}): "
                      "the big test set would repeat train or test shots.")
+    fresh = None
+    if args.fresh_train_seed is not None and not args.fresh_train:
+        ap.error("--fresh-train-seed only applies with --fresh-train")
+    if args.fresh_train:
+        from fresh_data import fresh_seed_schedule, resolve_fresh_seed_base
+        if args.train_shots is None or args.train_shots < 1:
+            ap.error("--fresh-train needs --train-shots N (shots per epoch)")
+        if args.extra_train_seed is not None:
+            ap.error("--extra-train-seed does not apply with --fresh-train, which has "
+                     "its own seed schedule (--fresh-train-seed)")
+        fresh_base = resolve_fresh_seed_base(args.split_seed, args.fresh_train_seed)
+        schedule = fresh_seed_schedule(fresh_base, args.epochs)
+        reserved = {args.split_seed: "split",
+                    resolve_extra_train_seed(args.split_seed, None): "extra-train"}
+        if big_seed is not None:
+            reserved[big_seed] = "big-test"
+        clash = sorted(set(schedule) & set(reserved))
+        if clash:
+            ap.error(f"--fresh-train seed schedule {schedule[0]}..{schedule[-1]} "
+                     f"includes the {reserved[clash[0]]} seed {clash[0]}; choose "
+                     "another --fresh-train-seed")
+        fresh = {"n_per_epoch": args.train_shots, "seed_base": fresh_base}
     arms = [k for k in ("A", "Raw", "ZX") if k in args.arms]   # canonical order
-    data_args = dict(train_shots=args.train_shots,
+    # With --fresh-train the fixed split is only used for val and test (identical
+    # objects either way), so the large fixed training set is never built.
+    data_args = dict(train_shots=None if fresh else args.train_shots,
                      extra_train_seed=args.extra_train_seed)
 
     config = vars(args).copy()
     prov = provenance(config)
+    if fresh is not None:
+        prov["fresh_train"] = {
+            "shots_per_epoch": args.train_shots, "seed_base": fresh_base,
+            "seed_rule": "epoch e (1-based) uses sampler seed seed_base + e",
+            "seeds_per_epoch": schedule,
+            "sampling": "dem.compile_sampler(seed) on the non-decomposed DEM, "
+                        f"sample() calls of {_FRESH_SHOT_CHUNK} shots, the same draw "
+                        "as _fresh_shots(d, p, shots_per_epoch, seed)",
+            "order": "sample order, no shuffling (fresh shots are i.i.d.)",
+            "same_schedule_for": "every arm, model seed and lambda",
+            "aux_class_weights_from": "epoch 1's shots",
+            "reproducibility": "stim's seeded sampling is platform-dependent: "
+                               "reproducible on the same kind of machine",
+        }
 
     results = {"provenance": prov, "arms": {}}
 
@@ -1468,9 +1548,19 @@ def main():
                              resolve_extra_train_seed(args.split_seed,
                                                       args.extra_train_seed)),
     }
-    print(f"[splits] train {len(train_ds)} (base {results['splits']['n_train_base']}"
-          f" + extra {results['splits']['n_train_extra']}), val {len(val_ds)}, "
-          f"test {len(test_ds)}")
+    if fresh is not None:
+        # No fixed training split: train_ds above is only the base pool's unused
+        # train part. Every epoch trains on shots_per_epoch fresh shots instead.
+        results["splits"] = {
+            "n_train": args.train_shots, "n_val": len(val_ds), "n_test": len(test_ds),
+            "n_train_base": 0, "n_train_extra": 0, "extra_train_seed": None,
+            "fresh_train_per_epoch": args.train_shots}
+        print(f"[splits] train: {args.train_shots} fresh shots per epoch (seeds "
+              f"{schedule[0]}..{schedule[-1]}), val {len(val_ds)}, test {len(test_ds)}")
+    else:
+        print(f"[splits] train {len(train_ds)} (base {results['splits']['n_train_base']}"
+              f" + extra {results['splits']['n_train_extra']}), val {len(val_ds)}, "
+              f"test {len(test_ds)}")
 
     # Big test set: fresh shots from their own sampler seed, never used for training,
     # selection or early stopping. Built and decoded by MWPM before training, so a
@@ -1488,6 +1578,11 @@ def main():
                 f"--eval-set was sampled with seed {big_seed}, which equals the split "
                 f"seed ({args.split_seed}) or the extra-train seed ({extra_seed}): it "
                 "would repeat train or test shots.")
+        if fresh is not None and big_seed in schedule:
+            raise RuntimeError(
+                f"--eval-set was sampled with seed {big_seed}, which is in the "
+                f"--fresh-train seed schedule {schedule[0]}..{schedule[-1]}: training "
+                "would include the eval shots. Choose another --fresh-train-seed.")
         eval_set_record = {"path": str(args.eval_set), "sha256": es_sha,
                            "checks": es_checks, "meta": es_meta}
         print(f"[eval set] loaded {len(big_ds)} shots (seed {big_seed}) from "
@@ -1525,7 +1620,8 @@ def main():
             args.seeds, args.lambdas, args.epochs, args.device,
             aux_data_qubits_only=args.aux_data_qubits_only,
             aux_class_weight=args.aux_class_weight, **data_args, **arch_args,
-            checkpoint=checkpoint, big_test_ds=big_ds, train_opts=train_opts)
+            checkpoint=checkpoint, big_test_ds=big_ds, train_opts=train_opts,
+            fresh=fresh)
         results["arms"][kind] = summary
         correctness[kind] = test_correct
         truths[kind] = test_truth

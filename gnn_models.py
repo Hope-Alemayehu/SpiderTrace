@@ -423,6 +423,11 @@ def train_model(model, train_loader, val_loader, config: Dict):
 
     for epoch in range(start_epoch, epochs):
         # ---- train ----
+        if hasattr(train_loader, "set_fresh_epoch"):
+            # fresh_data.FreshTrainSource (--fresh-train): new shots each epoch, chosen
+            # by the 1-based epoch, so a resumed run continues the same schedule.
+            # Plain DataLoaders have no such method and are untouched.
+            train_loader.set_fresh_epoch(epoch + 1)
         model.train()
         epoch_lr = opt.param_groups[0]["lr"]
         running = 0.0; nb = 0
