@@ -480,11 +480,23 @@ def sample_tuples(circuit: stim.Circuit, tables: FaultTables,
         shots=num_shots, return_errors=True,
         recorded_errors_to_replay=None,
     )
+    yield from tuples_from_samples(circuit, tables, dets, obs, errs)
+
+
+def tuples_from_samples(circuit: stim.Circuit, tables: FaultTables,
+                        dets: np.ndarray, obs: np.ndarray, errs: np.ndarray):
+    """The per-shot dicts of ``sample_tuples``, from already-sampled arrays.
+
+    ``dets`` (shots, num_detectors), ``obs`` (shots, num_observables) and ``errs``
+    (shots, num_errors) are what ``CompiledDemSampler.sample(..., return_errors=True)``
+    returns. sample_tuples samples and then calls this, so a stored copy of those
+    arrays (qec_run --eval-set) rebuilds exactly the same shots.
+    """
     N = tables.num_qubits
     dem_graph = build_dem_graph(circuit)            # fixed topology, built once
     ei = dem_graph.edge_index
     ea = dem_graph.edge_attr
-    for s in range(num_shots):
+    for s in range(len(dets)):
         fired_cols = np.where(errs[s])[0]
         fired_dets = np.where(dets[s])[0]
 

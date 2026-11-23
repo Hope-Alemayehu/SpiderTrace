@@ -32,7 +32,8 @@ ARGS = ["qec_run.py", "--d", "3", "--p", "0.01", "--shots", "1000", "--seeds", "
         "--device", "cpu"]
 CRASH_AFTER_EPOCHS = 6
 # Allowed to differ between an uninterrupted run and a resumed one.
-VOLATILE = {"provenance", "checkpoint", "wall_time_s", "resumed_after_epoch"}
+VOLATILE = {"provenance", "checkpoint", "wall_time_s", "decode_time_s",
+            "resumed_after_epoch"}
 
 
 class Crash(Exception):

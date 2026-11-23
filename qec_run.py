@@ -282,6 +282,183 @@ def _fresh_shots(d, p, n, seed):
     return out[:n]
 
 
+def _fresh_samples(d, p, n, seed):
+    """The raw sampler arrays behind _fresh_shots(d, p, n, seed): (dets, obs, errs).
+
+    Same DEM, same seeded sampler and the same sequence of sample() calls (chunks
+    of _FRESH_SHOT_CHUNK, with the same arguments sample_tuples passes), so row i
+    is the sample behind _fresh_shots(...)[i]. Needs only stim, not torch. Used by
+    export_eval_set.py to store the big test set.
+    """
+    from qec_zx_dataset import build_circuit
+    dem = build_circuit(d, p).detector_error_model(decompose_errors=False,
+                                                   flatten_loops=True)
+    sampler = dem.compile_sampler(seed=seed)
+    chunks, have = [], 0
+    while have < n:
+        chunk = sampler.sample(shots=_FRESH_SHOT_CHUNK, return_errors=True,
+                               recorded_errors_to_replay=None)
+        chunks.append(chunk)
+        have += _FRESH_SHOT_CHUNK
+    return tuple(np.concatenate([c[i] for c in chunks])[:n] for i in range(3))
+
+
+def _shots_from_samples(d, p, dets, obs, errs):
+    """PyG shots built from stored sampler arrays, by the same code as _fresh_shots."""
+    from qec_zx_dataset import (
+        build_circuit, build_fault_tables, to_pyg_list, tuples_from_samples,
+    )
+    circ = build_circuit(d, p)
+    tables, _unseeded = build_fault_tables(circ)
+    if errs.shape[1] != tables.num_errors:
+        raise RuntimeError(f"eval set has {errs.shape[1]} error columns, this circuit's "
+                           f"DEM has {tables.num_errors}.")
+    out = []
+    for s in range(0, len(dets), _FRESH_SHOT_CHUNK):   # bounded peak memory
+        sl = slice(s, s + _FRESH_SHOT_CHUNK)
+        out.extend(to_pyg_list(tuples_from_samples(circ, tables, dets[sl], obs[sl], errs[sl])))
+    return out
+
+
+# --------------------------------------------------------------------------------------
+# Stored evaluation set (--eval-set, export_eval_set.py). Stim's seeded sampling is not
+# portable across platforms (the same seed and stim version gave different shots on
+# Windows and on Kaggle Linux), so the canonical big test set is sampled once and
+# stored. The file holds the raw sampler output, so loading rebuilds the shots through
+# exactly the code path of _fresh_shots.
+#
+# .npz contents (no pickled objects):
+#   detectors   uint8 (n, ceil(num_detectors / 8))  bit-packed, little-endian bit order
+#   observables uint8 (n, num_observables)
+#   errors      uint8 (n, ceil(num_errors / 8))     bit-packed: which DEM errors fired
+#                                                   (rebuilds the aux targets exactly)
+#   mwpm_wrong_idx int64 (k,)                       MWPM's wrong shots at export time
+#   meta        0-d str                             JSON header: format, d, p, rounds,
+#                                                   n_shots, seed, sampler chunk size,
+#                                                   DEM sha256, MWPM error count,
+#                                                   provenance (commit, platform, versions)
+# --------------------------------------------------------------------------------------
+EVAL_SET_FORMAT = "spidertrace-eval-set-v1"
+
+
+def _dem_sha256(d, p):
+    """Fingerprint of the sampling DEM: loading checks the circuit is the same."""
+    import hashlib
+    from qec_zx_dataset import build_circuit
+    dem = build_circuit(d, p).detector_error_model(decompose_errors=False,
+                                                   flatten_loops=True)
+    return hashlib.sha256(str(dem).encode()).hexdigest()
+
+
+def _check_samples_consistent(d, p, dets, obs, errs):
+    """The stored detector and observable bits must equal the XOR of the stored
+    fired DEM errors' effects: catches a corrupted or mismatched file."""
+    from scipy import sparse
+    from qec_zx_dataset import build_circuit
+    dem = build_circuit(d, p).detector_error_model(decompose_errors=False,
+                                                   flatten_loops=True)
+    rows_d, cols_d, rows_o, cols_o = [], [], [], []
+    i = 0
+    for inst in dem.flattened():
+        if inst.type != "error":
+            continue
+        for t in inst.targets_copy():
+            if t.is_relative_detector_id():
+                rows_d.append(i); cols_d.append(t.val)
+            elif t.is_logical_observable_id():
+                rows_o.append(i); cols_o.append(t.val)
+        i += 1
+    E = sparse.csr_matrix(errs.astype(np.int32))
+    D = sparse.csr_matrix((np.ones(len(rows_d), np.int32), (rows_d, cols_d)),
+                          shape=(i, dem.num_detectors))
+    O = sparse.csr_matrix((np.ones(len(rows_o), np.int32), (rows_o, cols_o)),
+                          shape=(i, dem.num_observables))
+    ok_d = np.array_equal((E @ D).toarray() % 2, dets.astype(np.int32))
+    ok_o = np.array_equal((E @ O).toarray() % 2, obs.astype(np.int32))
+    if not (ok_d and ok_o):
+        raise RuntimeError("eval set is inconsistent: its detector/observable bits are "
+                           "not the effect of its stored DEM errors.")
+
+
+def _mwpm_wrong_from_samples(d, p, dets, obs):
+    """MWPM (plain) wrong-shot indices on raw sampler arrays."""
+    import pymatching
+    from qec_zx_dataset import build_circuit
+    dem = build_circuit(d, p).detector_error_model(decompose_errors=True)
+    pred = pymatching.Matching.from_detector_error_model(dem).decode_batch(
+        dets.astype(np.uint8))
+    return np.flatnonzero(pred[:, 0] != obs[:, 0])
+
+
+def write_eval_set(path, d, p, n, seed, extra_meta=None):
+    """Sample the big test set exactly as --big-test-shots does and store it."""
+    t0 = time.perf_counter()
+    dets, obs, errs = _fresh_samples(d, p, n, seed)
+    sample_s = time.perf_counter() - t0
+    _check_samples_consistent(d, p, dets, obs, errs)
+    wrong = _mwpm_wrong_from_samples(d, p, dets, obs)
+    meta = {"format": EVAL_SET_FORMAT, "d": d, "p": p, "rounds": d, "n_shots": int(n),
+            "seed": int(seed), "sampler_chunk": _FRESH_SHOT_CHUNK,
+            "num_detectors": int(dets.shape[1]), "num_observables": int(obs.shape[1]),
+            "num_errors": int(errs.shape[1]), "dem_sha256": _dem_sha256(d, p),
+            "mwpm_n_errors": int(wrong.size), "sample_time_s": sample_s,
+            **(extra_meta or {})}
+    np.savez_compressed(
+        path,
+        detectors=np.packbits(dets.astype(bool), axis=1, bitorder="little"),
+        observables=obs.astype(np.uint8),
+        errors=np.packbits(errs.astype(bool), axis=1, bitorder="little"),
+        mwpm_wrong_idx=wrong.astype(np.int64),
+        meta=np.array(json.dumps(meta)))
+    return meta
+
+
+def read_eval_set(path, d, p):
+    """Load and verify a stored eval set (see load_eval_set_arrays), then build its
+    shots as PyG graphs. Returns (shots, meta, file_sha256)."""
+    dets, obs, errs, meta, file_sha = load_eval_set_arrays(path, d, p)
+    return _shots_from_samples(d, p, dets, obs, errs), meta, file_sha
+
+
+def load_eval_set_arrays(path, d, p):
+    """Load a stored eval set for (d, p) and verify it, without torch.
+    Returns (dets, obs, errs, meta, file_sha256), arrays as bool.
+
+    Fails loudly unless: the format and (d, p) match, the sampling DEM is the same
+    circuit (sha256), the detector bits are the effect of the stored errors, and plain
+    MWPM on the stored shots reproduces the stored MWPM error count and wrong shots.
+    """
+    import hashlib
+    path = Path(path)
+    file_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    with np.load(path, allow_pickle=False) as z:
+        meta = json.loads(str(z["meta"]))
+        if meta.get("format") != EVAL_SET_FORMAT:
+            raise RuntimeError(f"{path}: not an eval set of format {EVAL_SET_FORMAT}.")
+        if (meta["d"], meta["p"]) != (d, p):
+            raise RuntimeError(f"{path} is for d={meta['d']}, p={meta['p']}; this run "
+                               f"is d={d}, p={p}.")
+        unpack = lambda a, k: np.unpackbits(a, axis=1, count=k,
+                                            bitorder="little").astype(bool)
+        dets = unpack(z["detectors"], meta["num_detectors"])
+        errs = unpack(z["errors"], meta["num_errors"])
+        obs = z["observables"].astype(bool)
+        stored_wrong = z["mwpm_wrong_idx"]
+    if meta["dem_sha256"] != _dem_sha256(d, p):
+        raise RuntimeError(f"{path} was sampled from a different DEM than this code "
+                           "builds for (d, p). Re-export it with this commit.")
+    if len(dets) != meta["n_shots"]:
+        raise RuntimeError(f"{path}: {len(dets)} shots stored, header says {meta['n_shots']}.")
+    _check_samples_consistent(d, p, dets, obs, errs)
+    wrong = _mwpm_wrong_from_samples(d, p, dets, obs)
+    if wrong.size != meta["mwpm_n_errors"] or not np.array_equal(wrong, stored_wrong):
+        raise RuntimeError(
+            f"MWPM on the stored eval set makes {wrong.size} errors, the file records "
+            f"{meta['mwpm_n_errors']}. The decoder or the file differs from export time; "
+            "refusing to score against it.")
+    return dets, obs, errs, meta, file_sha
+
+
 def _make_base_datasets(d, p, shots, split_seed, val_frac=0.15, test_frac=0.15):
     """Build train / val / test datasets for one (d, p).
 
@@ -469,7 +646,7 @@ def train(model, train_ds, val_ds, lambda_aux, epochs, seed, device,
     return model, train_info
 
 
-def predict_flips(model, dataset, device):
+def predict_flips(model, dataset, device, return_prob=False):
     """Run the trained model over a dataset and return per-example predictions.
 
     CONTRACT:
@@ -481,6 +658,9 @@ def predict_flips(model, dataset, device):
     Confirmed: forward(data) -> (flip_logit, aux_logits), aux None for GNN-A, so
     out[0] is right. Label field is `data.y` (long, shape (1,) per graph -> (B,)).
     `logit > 0` is exactly equivalent to the repo's `sigmoid(logit) > 0.5`.
+
+    With return_prob=True, also returns sigmoid(logit) per example as float32 (the
+    predictions are still thresholded on the logit, so they are unchanged).
     """
     import torch
     from torch_geometric.loader import DataLoader
@@ -488,7 +668,7 @@ def predict_flips(model, dataset, device):
     model = model.to(device)
     model.eval()
     loader = DataLoader(dataset, batch_size=hparam_batch_size(), shuffle=False)
-    preds, trues = [], []
+    preds, trues, probs = [], [], []
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device)
@@ -497,7 +677,12 @@ def predict_flips(model, dataset, device):
             logit = logit.reshape(-1)
             preds.append((logit > 0).long().cpu().numpy())
             trues.append(batch.y.reshape(-1).long().cpu().numpy())
-    return np.concatenate(preds).astype(int), np.concatenate(trues).astype(int)
+            if return_prob:
+                probs.append(torch.sigmoid(logit.float()).cpu().numpy())
+    pred = np.concatenate(preds).astype(int), np.concatenate(trues).astype(int)
+    if return_prob:
+        return (*pred, np.concatenate(probs).astype(np.float32))
+    return pred
 
 
 def hparam_batch_size():
@@ -771,9 +956,11 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     extra test set; each seed's SELECTED model is also scored on it. Selection
     never looks at it.
 
-    Returns (summary, test_correct, test_truth, big), where big maps each seed to
-    (correct_mask, y_true, eval_time_s, zero_fired_stats) on big_test_ds ({}
-    without one)."""
+    Returns (summary, test_correct, test_truth, big, saved), where big maps each
+    seed to (correct_mask, y_true, eval_time_s, zero_fired_stats, prob) on
+    big_test_ds ({} without one; prob = sigmoid of the flip logit, float32), and
+    saved maps each seed to the selected model's {"selected_lambda", "state_dict"}
+    (best-val weights, on CPU)."""
     import graph_variants
     data_args = dict(train_shots=train_shots, extra_train_seed=extra_train_seed)
     graph_args = dict(boundary=boundary, sublattice_types=sublattice_types)
@@ -794,6 +981,7 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
     test_correct = {}    # seed -> boolean per-example correctness on shared test set
     test_truth = {}      # seed -> y_true on shared test set (sanity: identical across arms)
     big = {}             # seed -> (correct_mask, y_true, eval_time_s) on big_test_ds
+    saved = {}           # seed -> selected model's weights (see Returns)
 
     num_qubits = _num_qubits_for(d)
     aux_qubits = _data_qubits_for(d) if aux_data_qubits_only else None
@@ -854,11 +1042,17 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
                         zero_fired_stats(test_ds, tp, tt))
 
         val_ler, lam, test_ler, correct_mask, y_true, aux, best_model, zf = best
+        # The selected model's best-val weights, for saving next to the JSON.
+        saved[seed] = {"selected_lambda": lam,
+                       "aux_qubits": (list(aux_qubits) if aux_qubits is not None
+                                      and kind != "A" else None),
+                       "state_dict": {k: v.detach().cpu().clone()
+                                      for k, v in best_model.state_dict().items()}}
         if big_test_ds is not None:
             t0 = time.perf_counter()
-            bp, bt = predict_flips(best_model, big_test_ds, device)
+            bp, bt, bprob = predict_flips(best_model, big_test_ds, device, return_prob=True)
             big[seed] = ((bp == bt), bt, time.perf_counter() - t0,
-                         zero_fired_stats(big_test_ds, bp, bt))
+                         zero_fired_stats(big_test_ds, bp, bt), bprob)
         # test_wrong_idx: positions in the shared test split that this model got
         # wrong. Lets runs in separate processes (e.g. different train sizes) be
         # compared with a paired McNemar later.
@@ -887,7 +1081,7 @@ def run_arm(kind, d, p, shots, split_seed, model_seeds, lambdas, epochs, device,
         "model": {**model_args, "n_params": n_params},
         "graph": graph_args,
     }
-    return summary, test_correct, test_truth, big
+    return summary, test_correct, test_truth, big, saved
 
 
 _FIRED_COUNT_CACHE = {}
@@ -948,6 +1142,105 @@ def mwpm_on_test(d, p, test_ds):
     pred = matching.decode_batch(dets)[:, 0].astype(int)
     ler = float(np.mean(pred != y_true))
     return ler, (pred == y_true), y_true
+
+
+def correlated_matching_on_test(d, p, test_ds):
+    """Decode a test set with PyMatching's two-pass correlated matching.
+
+    Set-up per PyMatching 2.4.0 (checked against its source and docstrings): the
+    DEM must be the DECOMPOSED one, the same as plain MWPM above, because
+    correlated matching reads each hyperedge's decomposition into graphlike parts
+    (the '^' separators). enable_correlations=True is required both when the
+    Matching is built and when decoding (decoding with it alone raises). Algorithm:
+    Fowler, arXiv:1310.0863. Deterministic.
+
+    Returns (ler, correct_mask, y_true, decode_time_s).
+    """
+    import pymatching
+    from qec_zx_dataset import build_circuit
+
+    circ = build_circuit(d, p)
+    dem = circ.detector_error_model(decompose_errors=True)
+    matching = pymatching.Matching.from_detector_error_model(dem, enable_correlations=True)
+    dets = np.stack([g.x[g.x[:, 4] == 0, 0].numpy() for g in test_ds]).astype(np.uint8)
+    assert dets.shape[1] == circ.num_detectors, "syndrome length mismatch"
+    y_true = np.array([int(g.y.item()) for g in test_ds])
+    t0 = time.perf_counter()
+    pred = matching.decode_batch(dets, enable_correlations=True)[:, 0].astype(int)
+    decode_s = time.perf_counter() - t0
+    return float(np.mean(pred != y_true)), (pred == y_true), y_true, decode_s
+
+
+def decoder_block(ler, correct, n_test=None, decode_time_s=None):
+    """JSON record of a non-learned decoder on one test set."""
+    wrong = np.flatnonzero(~np.asarray(correct, dtype=bool))
+    out = {"test_ler": ler}
+    if n_test is not None:
+        out["n_test"] = n_test
+    out.update({"n_errors": int(wrong.size), "test_wrong_idx": wrong.tolist()})
+    if decode_time_s is not None:
+        out["decode_time_s"] = decode_time_s
+    return out
+
+
+def paired_mcnemar_vs_reference(arms, seeds, correctness, ref_correct, ref_name,
+                                label=""):
+    """McNemar per seed of EVERY arm run against one reference decoder, keyed
+    mcnemar_<arm>_vs_<ref_name> (a = the arm, b = the reference)."""
+    out = {}
+    primary = str(seeds[0])
+    for a in arms:
+        key = f"mcnemar_{a.lower()}_vs_{ref_name}"
+        out[key] = {str(seed): mcnemar(correctness[a][seed], ref_correct) for seed in seeds}
+        out[key]["_primary_seed"] = primary
+        print(f"[McNemar {a} vs {ref_name}{label}, seed {primary}] "
+              f"p = {out[key][primary]['p_value']:.4g}")
+    return out
+
+
+def save_run_models(outpath, saved, results, big_probs=None, big_y_true=None):
+    """Write the selected models and their big-test probabilities next to the JSON.
+
+      <run>_weights/<arm>_seed<seed>.pt   best-val state_dict of the model each seed
+                                          selected, with what is needed to rebuild it
+                                          (arm, seed, lambda, backbone and graph args,
+                                          aux_qubits): build_model(arm, d=d,
+                                          aux_qubits=..., **model minus n_params)
+      <run>_bigtest_probs.npz             only with a big test: one float32 array of
+                                          sigmoid(flip logit) per "<arm>_seed<seed>",
+                                          y_true, and a JSON header (meta)
+    Called before the checkpoint is deleted, so nothing is lost if it fails.
+    """
+    import torch
+    outpath = Path(outpath)
+    cfg = results["provenance"]["config"]
+    wdir = outpath.with_name(outpath.stem + "_weights")
+    wdir.mkdir()
+    sizes = {}
+    for kind, per_seed in saved.items():
+        arm = results["arms"][kind]
+        for seed, rec in per_seed.items():
+            f = wdir / f"{kind}_seed{seed}.pt"
+            torch.save({"arm": kind, "seed": seed, "d": cfg["d"], "p": cfg["p"],
+                        "selected_lambda": rec["selected_lambda"],
+                        "model": arm["model"], "graph": arm["graph"],
+                        "aux_slots": arm["aux_slots"], "aux_qubits": rec["aux_qubits"],
+                        "run_json": outpath.name,
+                        "git_commit": results["provenance"]["git_commit"],
+                        "state_dict": rec["state_dict"]}, f)
+            sizes[f.name] = f.stat().st_size
+    print(f"[saved] {len(sizes)} models to {wdir} "
+          f"({sum(sizes.values()) / 1e6:.2f} MB)")
+    if big_probs:
+        f = outpath.with_name(outpath.stem + "_bigtest_probs.npz")
+        bt = results["big_test"]
+        meta = {"run_json": outpath.name, "n_test": bt["n_test"], "seed": bt["seed"],
+                "eval_set_sha256": bt.get("eval_set", {}).get("sha256"),
+                "keys": sorted(big_probs), "prob": "sigmoid(flip logit), float32; "
+                "the prediction is prob > 0.5 (logit > 0)"}
+        np.savez_compressed(f, y_true=np.asarray(big_y_true, dtype=np.uint8),
+                            meta=np.array(json.dumps(meta)), **big_probs)
+        print(f"[saved] big-test probabilities to {f} ({f.stat().st_size / 1e6:.2f} MB)")
 
 
 def main():
@@ -1052,6 +1345,17 @@ def main():
                     help="early-stopping patience in epochs (val loss). With a cosine "
                          "schedule, set it high enough that the low-lr phase is "
                          "reached. Default: 10, as before.")
+    # ---- evaluation and outputs (results above are unchanged by these). ----
+    ap.add_argument("--eval-set", default=None,
+                    help="score the big test on a stored eval set (.npz from "
+                         "export_eval_set.py) instead of sampling it here. Replaces "
+                         "--big-test-shots / --big-test-seed. The file is verified on "
+                         "load: plain MWPM must reproduce its stored error count. "
+                         "Default: off.")
+    ap.add_argument("--no-save-models", action="store_true",
+                    help="do not write the selected models' best-val weights "
+                         "(<run>_weights/) and big-test probabilities "
+                         "(<run>_bigtest_probs.npz) next to the JSON. Default: write them.")
     args = ap.parse_args()
     if args.lr <= 0:
         ap.error("--lr must be > 0")
@@ -1071,6 +1375,12 @@ def main():
     if args.extra_train_seed is not None and args.train_shots is None:
         ap.error("--extra-train-seed only applies with --train-shots")
     big_seed = None
+    if args.eval_set is not None:
+        if args.big_test_shots is not None or args.big_test_seed is not None:
+            ap.error("--eval-set replaces --big-test-shots / --big-test-seed: "
+                     "give one or the other")
+        if not Path(args.eval_set).is_file():
+            ap.error(f"--eval-set: no such file {args.eval_set}")
     if args.big_test_seed is not None and args.big_test_shots is None:
         ap.error("--big-test-seed only applies with --big-test-shots")
     if args.big_test_shots is not None:
@@ -1111,6 +1421,17 @@ def main():
             f"{args.expect_mwpm_errors}. This is not the expected test set (seeded "
             "stim sampling can differ between machines). Stopping before training.")
 
+    # Correlated matching on the same test shots: a second, stronger non-learned
+    # baseline. Like MWPM it uses no torch or numpy global RNG.
+    corr_ler, corr_correct, corr_truth, corr_s = correlated_matching_on_test(
+        args.d, args.p, test_ds)
+    assert np.array_equal(corr_truth, mwpm_truth)
+    results["correlated_matching"] = decoder_block(corr_ler, corr_correct, len(test_ds),
+                                                   corr_s)
+    print(f"[correlated matching] test LER = {corr_ler:.4f} "
+          f"({results['correlated_matching']['n_errors']} errors) on {len(test_ds)} "
+          f"test shots")
+
     n_base_train = len(make_datasets(args.d, args.p, args.shots, args.split_seed)[0])
     results["splits"] = {
         "n_train": len(train_ds), "n_val": len(val_ds), "n_test": len(test_ds),
@@ -1128,10 +1449,26 @@ def main():
     # selection or early stopping. Built and decoded by MWPM before training, so a
     # memory problem shows up before hours of training rather than after.
     big_ds = None
-    if args.big_test_shots is not None:
+    eval_set_record = None
+    if args.eval_set is not None:
+        t0 = time.perf_counter()
+        big_ds, es_meta, es_sha = read_eval_set(args.eval_set, args.d, args.p)
+        gen_s = time.perf_counter() - t0
+        big_seed = es_meta["seed"]
+        extra_seed = resolve_extra_train_seed(args.split_seed, args.extra_train_seed)
+        if big_seed in (args.split_seed, extra_seed):
+            raise RuntimeError(
+                f"--eval-set was sampled with seed {big_seed}, which equals the split "
+                f"seed ({args.split_seed}) or the extra-train seed ({extra_seed}): it "
+                "would repeat train or test shots.")
+        eval_set_record = {"path": str(args.eval_set), "sha256": es_sha, "meta": es_meta}
+        print(f"[eval set] loaded {len(big_ds)} shots (seed {big_seed}) from "
+              f"{args.eval_set}; MWPM check passed ({es_meta['mwpm_n_errors']} errors)")
+    elif args.big_test_shots is not None:
         t0 = time.perf_counter()
         big_ds = _fresh_shots(args.d, args.p, args.big_test_shots, big_seed)
         gen_s = time.perf_counter() - t0
+    if big_ds is not None:
         t0 = time.perf_counter()
         big_mwpm_ler, big_mwpm_correct, big_mwpm_truth = mwpm_on_test(
             args.d, args.p, big_ds)
@@ -1140,6 +1477,11 @@ def main():
         print(f"[big test] {len(big_ds)} shots from seed {big_seed}, built in "
               f"{gen_s:.1f} s. MWPM LER = {big_mwpm_ler:.5f} "
               f"({big_mwpm_wrong.size} errors), decoded in {big_mwpm_s:.1f} s")
+        big_corr_ler, big_corr_correct, big_corr_truth, big_corr_s = \
+            correlated_matching_on_test(args.d, args.p, big_ds)
+        assert np.array_equal(big_corr_truth, big_mwpm_truth)
+        print(f"[big test] correlated matching LER = {big_corr_ler:.5f} "
+              f"({int((~big_corr_correct).sum())} errors), decoded in {big_corr_s:.1f} s")
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -1147,9 +1489,10 @@ def main():
 
     correctness = {}  # arm -> {seed -> mask}
     truths = {}       # arm -> {seed -> y_true}
-    big = {}          # arm -> {seed -> (mask, y_true, eval_time_s, zero_fired)} on big test
+    big = {}          # arm -> {seed -> (mask, y_true, eval_time_s, zero_fired, prob)} on big test
+    saved = {}        # arm -> {seed -> selected model's weights}
     for kind in arms:
-        summary, test_correct, test_truth, big[kind] = run_arm(
+        summary, test_correct, test_truth, big[kind], saved[kind] = run_arm(
             kind, args.d, args.p, args.shots, args.split_seed,
             args.seeds, args.lambdas, args.epochs, args.device,
             aux_data_qubits_only=args.aux_data_qubits_only,
@@ -1179,6 +1522,8 @@ def main():
     # McNemar per seed on the shared test set (primary = first seed), for each
     # pair whose arms were run.
     results.update(paired_mcnemar(arms, args.seeds, correctness, mwpm_correct))
+    results.update(paired_mcnemar_vs_reference(arms, args.seeds, correctness,
+                                               corr_correct, "corr"))
 
     # Big test set: secondary, reported separately; the primary results above are
     # computed exactly as without it.
@@ -1188,12 +1533,18 @@ def main():
                        "test_wrong_idx": big_mwpm_wrong.tolist(),
                        "decode_time_s": big_mwpm_s},
               "arms": {}}
+        bt["correlated_matching"] = decoder_block(big_corr_ler, big_corr_correct,
+                                                  decode_time_s=big_corr_s)
+        if eval_set_record is not None:
+            bt["eval_set"] = eval_set_record
         big_correct = {}
+        big_probs = {}    # "<arm>_seed<seed>" -> float32 probabilities
         for kind in arms:
             bt["arms"][kind] = {}
             big_correct[kind] = {}
             for seed in args.seeds:
-                mask, y_true, eval_s, zf = big[kind][seed]
+                mask, y_true, eval_s, zf, prob = big[kind][seed]
+                big_probs[f"{kind}_seed{seed}"] = prob
                 if not np.array_equal(y_true, big_mwpm_truth):
                     raise RuntimeError(f"Big test set of {kind} at seed {seed} differs "
                                        "from MWPM's.")
@@ -1208,6 +1559,9 @@ def main():
                   f"({first['n_errors']} errors), seed {args.seeds[0]}")
         bt.update(paired_mcnemar(arms, args.seeds, big_correct, big_mwpm_correct,
                                  label=", big test"))
+        bt.update(paired_mcnemar_vs_reference(arms, args.seeds, big_correct,
+                                              big_corr_correct, "corr",
+                                              label=", big test"))
         results["big_test"] = bt
 
     resumed = checkpoint.resume_record()
@@ -1219,6 +1573,10 @@ def main():
     outpath = outdir / f"run_{stamp}_d{args.d}_p{args.p}.json"
     outpath.write_text(json.dumps(results, indent=2))
     print(f"\nWrote {outpath}")
+    if not args.no_save_models:
+        save_run_models(outpath, saved, results,
+                        big_probs if big_ds is not None else None,
+                        big_mwpm_truth if big_ds is not None else None)
     # Only now is the checkpoint redundant: the JSON holds everything it did.
     checkpoint.finish()
     print("This file is now the source of truth: it carries its own git commit, "

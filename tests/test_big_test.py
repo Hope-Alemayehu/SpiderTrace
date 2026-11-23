@@ -53,7 +53,7 @@ def runs(tmp_path_factory):
 def strip_volatile(obj):
     if isinstance(obj, dict):
         return {k: strip_volatile(v) for k, v in obj.items()
-                if k not in ("provenance", "wall_time_s", "big_test")}
+                if k not in ("provenance", "wall_time_s", "decode_time_s", "big_test")}
     if isinstance(obj, list):
         return [strip_volatile(v) for v in obj]
     return obj

@@ -133,7 +133,8 @@ def resume_runs(tmp_path_factory):
 
 
 def strip(obj):
-    volatile = {"provenance", "checkpoint", "wall_time_s", "resumed_after_epoch"}
+    volatile = {"provenance", "checkpoint", "wall_time_s", "decode_time_s",
+                "resumed_after_epoch"}
     if isinstance(obj, dict):
         return {k: strip(v) for k, v in obj.items() if k not in volatile}
     if isinstance(obj, list):
