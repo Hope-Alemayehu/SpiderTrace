@@ -650,3 +650,149 @@ All four runs use the same model, seed 0, up to 100 epochs, and the same 7,500 t
   - The rule "fewer errors and p < 0.05 at every seed" is not a valid test of a config effect under this noise.
 - **Hypothesis, not tested:** much of the run-to-run spread enters through early stopping. The reruns stopped at different points (C0 rerun at epochs 48 and 50 against 69 and 71) and are scored at different best epochs. A schedule that reaches a low lr before stopping, or a fixed epoch budget without early stopping, might reduce it.
 - **Next:** decide on a new comparison protocol before more ablation sessions. For example: several independent runs per config, comparing big-test error counts across runs rather than shots within one pair, or deterministic GPU training if it can be made to work with the PyG scatter ops.
+
+## Phase 3, S3 (recipe v2: C0 and C4)
+- **Date:** 2026-11-22 to 2026-11-23
+- **Where:** Kaggle, GPU, torch 2.11.0+cu130. Two runs back to back: C0 started at 16:37 UTC and its JSON was written at 20:27 UTC; C4 started at 20:27 UTC and its JSON was written at 00:35 UTC.
+- **Runs:**
+  - **C0, recipe v2:** commit 76da5a7 (clean). Default backbone (norm none, no residual, 78,053 parameters). Outdir `/kaggle/working/results/C0_recipe_v2`.
+  - **C4, recipe v2:** commit 76da5a7 (clean). Same command plus `--residual --norm layer` (78,821 parameters). Outdir `/kaggle/working/results/C4_recipe_v2`. C4 changes two things at once, the residual connections and LayerNorm.
+  - 76da5a7 only adds analysis and result files on top of 9b2a066 (and so on top of 5110582), so the training code is the same as in S1 and S2.
+- **Recipe v2:** cosine over a 60-epoch cap, from lr 1e-3 to lr_min 1e-5, `--grad-clip 1.0`, patience 60. Patience equals the cap, so early stopping cannot fire: every run trains all 60 epochs and the cosine schedule runs to its end. As before, the model is scored at the epoch with the lowest val loss (best_epoch).
+- **Command (C4):** `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 300000 --arms A --seeds 0 1 2 --epochs 60 --patience 60 --lr 1e-3 --lr-schedule cosine --lr-min 1e-5 --grad-clip 1.0 --residual --norm layer --big-test-shots 200000 --expect-mwpm-errors 36 --device cuda --outdir /kaggle/working/results/C4_recipe_v2`. The C0 command is the same without `--residual --norm layer`, with outdir `C0_recipe_v2`.
+- **Setup:** GNN-A, d=5, p=0.003, seeds 0, 1 and 2, 300,000 train shots. Same primary test set (`--expect-mwpm-errors 36` passed) and same big test (200,000 shots, seed 12347, 664 MWPM errors). The MWPM wrong-shot lists match S2 and Run 11 exactly on both test sets. Neither run was resumed.
+- **Runs per config:** three seeds, so three independent training runs per config. Under the S2 finding, "seed" is a label for a run rather than a controlled variable.
+- **Files:**
+  - C0, recipe v2: results/run_20261122T202714Z_d5_p0.003.json
+  - C4, recipe v2: results/run_20261123T003558Z_d5_p0.003.json
+- **Analysis:** analysis/phase3_results/s3_details.json (from analysis/phase3_s3_details.py). "C0_recipe" below is the S2 run (results/run_20261117T095238Z_d5_p0.003.json).
+
+**Big test set (200,000 shots, seed 12347)**
+
+| Run | Seed | Errors | LER | Ratio to MWPM (664 errors) | McNemar vs MWPM (A right & MWPM wrong / MWPM right & A wrong) |
+|---|---|---|---|---|---|
+| C0, recipe v2 | 0 | 1,272 | 0.006360 | 1.92 | 184 / 792, p = 2.0e-90 |
+| C0, recipe v2 | 1 | 1,249 | 0.006245 | 1.88 | 195 / 780, p = 2.1e-83 |
+| C0, recipe v2 | 2 | 1,184 | 0.005920 | 1.78 | 191 / 711, p = 4.6e-71 |
+| C4, recipe v2 | 0 | 968 | 0.004840 | 1.46 | 176 / 480, p = 1.8e-33 |
+| C4, recipe v2 | 1 | 972 | 0.004860 | 1.46 | 193 / 501, p = 2.0e-32 |
+| C4, recipe v2 | 2 | 986 | 0.004930 | 1.48 | 175 / 497, p = 1.3e-36 |
+
+| Run | Mean errors ± SD across 3 runs | Range | Mean ratio to MWPM |
+|---|---|---|---|
+| C0, recipe v2 | 1,235 ± 45.6 | 1,184 to 1,272 (88) | 1.86 |
+| C4, recipe v2 | 975.3 ± 9.5 | 968 to 986 (18) | 1.47 |
+
+- SD is the sample SD (n-1) over the three runs. Statistical uncertainty per LER: about ±0.00016 to ±0.00018 (200,000 shots).
+
+**Primary test set (7,500 shots, MWPM 36 errors)**
+
+| Run | Seed | Test errors | Test LER | Ratio to MWPM | Val LER | McNemar vs MWPM (A right & MWPM wrong / MWPM right & A wrong) |
+|---|---|---|---|---|---|---|
+| C0, recipe v2 | 0 | 54 | 0.0072 | 1.50 | 0.0076 | 8 / 26, p = 0.0029 |
+| C0, recipe v2 | 1 | 54 | 0.0072 | 1.50 | 0.0068 | 11 / 29, p = 0.0064 |
+| C0, recipe v2 | 2 | 51 | 0.0068 | 1.42 | 0.0067 | 11 / 26, p = 0.020 |
+| C4, recipe v2 | 0 | 41 | 0.0055 | 1.14 | 0.0055 | 9 / 14, p = 0.40 |
+| C4, recipe v2 | 1 | 36 | 0.0048 | 1.00 | 0.0051 | 15 / 15, p = 1.0 |
+| C4, recipe v2 | 2 | 38 | 0.0051 | 1.06 | 0.0059 | 8 / 10, p = 0.81 |
+
+- Across runs: C0 53.0 ± 1.7 errors (51 to 54), mean ratio 1.47; C4 38.3 ± 2.5 errors (36 to 41), mean ratio 1.06.
+- Statistical uncertainty per LER: about ±0.0008 to ±0.0010 (7,500 test shots).
+
+**C4 vs C0 under recipe v2**
+- **Decision rule (from S3 on):** config B beats config A only if every B run beats every A run on the big test (3 runs each), and the mean gap is larger than the run-to-run range within either config. Per-seed McNemar is reported but is not decisive.
+- **Applied to C4 vs C0: C4 beats C0.**
+  - Every C4 run beats every C0 run: the worst C4 run has 986 errors and the best C0 run has 1,184.
+  - The mean gap is 259.7 errors. The run-to-run range is 88 for C0 and 18 for C4, so the gap is larger than both.
+- **Same seed, paired McNemar** (reported, not decisive; fixed = C0 wrong and C4 right; newly wrong = the reverse):
+
+| Seed | Set | Fixed | Newly wrong | Wrong in both | p |
+|---|---|---|---|---|---|
+| 0 | big | 554 | 250 | 718 | 2.8e-27 |
+| 1 | big | 557 | 280 | 692 | 6.0e-22 |
+| 2 | big | 471 | 273 | 713 | 3.7e-13 |
+| 0 | primary | 23 | 10 | 31 | 0.035 |
+| 1 | primary | 30 | 12 | 24 | 0.0079 |
+| 2 | primary | 23 | 10 | 28 | 0.035 |
+
+- **Cross-run comparison** (the three C4 runs against the three C0 runs, as independent samples; seeds are not matched):
+  - Big test: every C4 run has fewer errors than every C0 run (C4 at most 986, C0 at least 1,184). The mean difference is 259.7 errors. Exact Mann-Whitney U = 0: one-sided p = 0.05, two-sided p = 0.10, which are the smallest values possible with 3 runs against 3. Welch t-test, two-sided: p = 0.0080.
+  - Big test, all 9 cross pairs (each C4 run against each C0 run, paired McNemar): C4 has fewer errors in all 9, with p between 2.8e-27 and 3.7e-13.
+  - Primary set: every C4 run is below every C0 run (C4 at most 41, C0 at least 51); mean difference 14.7 errors; Mann-Whitney one-sided p = 0.05, two-sided p = 0.10; Welch two-sided p = 0.0019. In the 9 cross pairs C4 has fewer errors in all 9, with p < 0.05 in 7 (the other two: 0.053 and 0.13).
+
+**C0 recipe v2 vs C0_recipe (S2)**
+- **What differs:** the epoch cap (60 vs 100) and patience (60 vs 10). In S2, early stopping ended the runs at epochs 48 and 66, with lr still at 55% and 28% of the initial value. In recipe v2 every run reached epoch 60 with lr 1.07e-5 (1.1% of the initial value). Same commit lineage, flags otherwise identical.
+- **Same seed, paired McNemar** (fixed = C0_recipe wrong and C0 recipe v2 right):
+
+| Seed | Set | C0_recipe errors | Recipe v2 errors | Fixed | Newly wrong | Wrong in both | p |
+|---|---|---|---|---|---|---|---|
+| 0 | big | 1,479 | 1,272 | 476 | 269 | 1,003 | 3.1e-14 |
+| 1 | big | 1,206 | 1,249 | 320 | 363 | 886 | 0.11 |
+| 0 | primary | 65 | 54 | 24 | 13 | 41 | 0.099 |
+| 1 | primary | 47 | 54 | 9 | 16 | 38 | 0.23 |
+
+- **Across runs, big test:** C0_recipe 1,342.5 ± 193.0 (2 runs, range 273); C0 recipe v2 1,235 ± 45.6 (3 runs, range 88).
+- **Run-to-run disagreement on the big test** (shots wrong in only one of two runs of the same config):
+
+| Run | Pair | Only first wrong | Only second wrong | p |
+|---|---|---|---|---|
+| C0_recipe | seed 0 vs 1 | 532 | 259 | 1.5e-22 |
+| C0, recipe v2 | seed 0 vs 1 | 366 | 343 | 0.41 |
+| C0, recipe v2 | seed 0 vs 2 | 362 | 274 | 5.5e-4 |
+| C0, recipe v2 | seed 1 vs 2 | 377 | 312 | 0.015 |
+| C4, recipe v2 | seed 0 vs 1 | 216 | 220 | 0.89 |
+| C4, recipe v2 | seed 0 vs 2 | 201 | 219 | 0.41 |
+| C4, recipe v2 | seed 1 vs 2 | 238 | 252 | 0.56 |
+
+- **Nondeterminism at epoch 1:** C0 recipe v2 and C0_recipe have the same seeds and the same lr in epoch 1 (1e-3). The largest epoch-1 gradient norm is the same in both (9,354.8 at seed 0; 4,419.2 and 4,419.3 at seed 1), yet epoch-1 val loss is 0.124 vs 0.104 at seed 0 and 0.121 vs 0.110 at seed 1. The runs diverge within the first epoch, as in S2.
+
+**Training**
+
+| Run | Seed | epochs_run | best_epoch | Wall time | Epoch-1 val loss | Best val loss (train loss at that epoch) | lr at best epoch | Final lr (epoch 60) | Val spikes (>1.3x) |
+|---|---|---|---|---|---|---|---|---|---|
+| C0, recipe v2 | 0 | 60 | 56 | 4,480 s | 0.124 | 0.0187 (0.0179) | 2.69e-5 | 1.07e-5 | none |
+| C0, recipe v2 | 1 | 60 | 46 | 4,523 s | 0.121 | 0.0172 (0.0179) | 1.55e-4 | 1.07e-5 | none |
+| C0, recipe v2 | 2 | 60 | 52 | 4,590 s | 0.115 | 0.0182 (0.0162) | 6.40e-5 | 1.07e-5 | epoch 6 (0.0422 to 0.1018, 2.41x) |
+| C4, recipe v2 | 0 | 60 | 45 | 4,896 s | 0.164 | 0.0156 (0.0130) | 1.74e-4 | 1.07e-5 | epoch 18 (0.0175 to 0.0245, 1.40x), epoch 31 (0.0163 to 0.0223, 1.37x) |
+| C4, recipe v2 | 1 | 60 | 42 | 4,885 s | 0.170 | 0.0143 (0.0126) | 2.35e-4 | 1.07e-5 | none |
+| C4, recipe v2 | 2 | 60 | 55 | 4,892 s | 0.149 | 0.0151 (0.0110) | 3.42e-5 | 1.07e-5 | none |
+
+- **Train-loss spikes (>1.3x):** none in any of the six runs.
+- **lr:** the recorded lr matches the per-epoch cosine formula with T_max = 60 in every run. All best epochs (42 to 56) fall in the second half of the schedule, at lr between 2.7e-5 and 2.4e-4.
+- **Gradient norms** (measured before clipping; 1,172 steps per epoch):
+
+| Run | Seed | Epoch 1: mean, max, clipped | From epoch 2: mean of epoch means, max, clipped | Last epoch clipped |
+|---|---|---|---|---|
+| C0, recipe v2 | 0 | 32.0, 9,355, 82.5% | 0.44, 18.9, 5.1% | 0.2% |
+| C0, recipe v2 | 1 | 19.3, 4,419, 92.3% | 0.36, 15.8, 3.1% | 0.6% |
+| C0, recipe v2 | 2 | 17.0, 2,665, 92.6% | 0.48, 32.8, 6.7% | 0.9% |
+| C4, recipe v2 | 0 | 353.5, 2,239, 100% | 0.96, 572, 7.2% | 0.6% |
+| C4, recipe v2 | 1 | 249.8, 2,386, 100% | 0.64, 208, 6.0% | 0.2% |
+| C4, recipe v2 | 2 | 269.5, 2,078, 100% | 0.58, 123, 5.7% | 0.4% |
+
+**Zero-fired shots:** 15,307 big-test shots; 0 true flips and 0 predicted flips for every run.
+
+**Context: C4 at 300k against the 1M baseline.** Run 11 (1,000,000 train shots, default backbone, constant lr, no clipping, seed 0, a single run) has 1,021 big-test errors (ratio 1.54). The three C4 runs have 968, 972 and 986. Paired McNemar against Run 11 (fixed = Run 11 wrong and C4 right): 395 vs 342 (p = 0.055), 410 vs 361 (p = 0.084), 410 vs 375 (p = 0.22). The three C0 recipe v2 runs are all worse than Run 11 (p between 8.8e-19 and 5.7e-9). Run 11 is one run, and it differs from C4 in data, recipe and architecture.
+
+## Interpretation (Phase 3, S3)
+- **C4 vs C0 (data):**
+  - C4 passes the decision rule: every C4 run beats every C0 run on the big test, and the mean gap (259.7 errors) is larger than the range within either config (88 and 18).
+  - Under recipe v2, all three C4 runs beat all three C0 runs on both test sets. On the big test the gap is 259.7 errors on average (1.47x MWPM against 1.86x), and the closest pair is still 198 errors apart (986 vs 1,184).
+  - Every one of the 9 cross pairs on the big test is significant in favour of C4. The same-seed McNemar agrees at every seed on both sets.
+  - With 3 runs per config, the exact rank test cannot go below one-sided p = 0.05, and it reaches that bound.
+  - On the primary set C4 is level with MWPM (36 to 41 errors against 36; no seed significant). On the big test it is still clearly worse than MWPM (p ≤ 2.0e-32 at every seed).
+- **C4 vs C0 (what it does not show):**
+  - C4 changes two things (residual connections and LayerNorm). These runs cannot say which one matters, or whether both are needed.
+  - The C4 runs are not more stable in training: epoch-1 val loss is worse (0.149 to 0.170 against 0.115 to 0.124), every epoch-1 step was clipped, and later gradient norms reach 123 to 572 against 16 to 33 for C0. One C4 run has two val spikes.
+- **Recipe v2 vs the S2 recipe (data):**
+  - At seed 0 recipe v2 is significantly better (1,272 vs 1,479, p = 3.1e-14). At seed 1 it is slightly worse, not significantly (1,249 vs 1,206, p = 0.11).
+  - The spread between runs is much smaller: range 88 errors over 3 runs against 273 over 2, and the seed-0 vs seed-1 disagreement is balanced (366 vs 343, p = 0.41) against 532 vs 259 (p = 1.5e-22) in S2. C4 under recipe v2 has the smallest spread so far (range 18; no seed pair significant).
+  - The full schedule cannot be separated from removing early stopping: recipe v2 changes both at once.
+- **Nondeterminism (data):** epoch 1 still diverges between same-seed runs (0.124 vs 0.104 val loss at seed 0). Recipe v2 did not make training deterministic, and no same-seed rerun under recipe v2 exists yet, so its run-to-run noise has not been measured directly.
+- **Against the noise scale from S2 (consequence):** the C4 gap (259.7 errors on average) is about the size of the S2 same-seed rerun differences (229 to 299 errors). Those were measured under constant lr with early stopping, so they are not the noise scale for recipe v2. Within recipe v2 the run-to-run ranges (88 for C0, 18 for C4) are well below the gap. The decision rule compares against these within-config ranges, not against the S2 numbers.
+  - The range term of the rule uses only 3 runs per config. With so few runs, the range can understate the true run-to-run spread.
+- **Hypotheses, not tested:**
+  - Training to a low lr without early stopping shrinks the run-to-run spread. This is consistent with the S2 hypothesis and with the ranges above, but different seeds also differ by nondeterminism, so a same-seed rerun under recipe v2 is needed to measure it.
+  - The C4 gain comes from LayerNorm controlling the large activations of the unnormalized backbone, rather than from the residual connections. The gradient norms above do not support a simple version of this (C4's are larger), so it needs the two parts ablated separately.
+  - C4 at 300k matching Run 11 at 1M suggests the architecture and recipe are worth at least as much as a 3.3x data increase here. Run 11 is one run under the old recipe, so this is a lead, not a result.
+- **Next:** adopt recipe v2 and C4 as the new baseline; ablate residual and LayerNorm separately (3 runs each); one same-seed rerun under recipe v2 to measure its nondeterminism; then C4 at 1M shots.
