@@ -1021,3 +1021,47 @@ The ZX vs Raw rows go in both directions across seeds, which is what run-to-run 
 - **Next:**
   - C0 and C4 at 100k (3 runs each): a third point on the scaling curve, and a direct check of the log-linear assumption.
   - Residual-only and LayerNorm-only at 300k: which half of C4 matters.
+
+## 2026-11-24: smoothing inside the trained models (analysis, no training)
+- **Question:** C4 was motivated by the Phase 1 oversmoothing diagnosis, which was measured at initialisation (d=3) and on one trained d=3 default model. Do the trained d=5 models differ the way that motivation predicts?
+- **Where:** local Windows CPU, torch 2.11.0. Code at 083700f plus the new, uncommitted `analysis/p4_trained_smoothing.py`.
+- **Command:** `python analysis/p4_trained_smoothing.py` (defaults: 4,000 shots, probe on the first 1,000). Wall time 306 s.
+- **Models:** the saved weights of S5 C0 and S5 C4 (35k) and of S4 C4 + fresh data (the final model), seeds 0 1 2. Plus C0 and C4 before training, built as `run_arm` builds them (`_seed_all(seed)`, then `build_model`). The CUDA runs built their models on CPU from the same torch seed, so these should be their starting weights; this is not checked.
+- **Shots:** the first 4,000 shots of the stored eval set (5.02 fired detectors per shot on average, 318 with none). The file loaded with the strict DEM fingerprint failing and the bit and MWPM checks passing (Windows; the warning path from 4f759ad).
+- **Check:** every reloaded trained model gives exactly its run's wrong-shot list on these shots (C0 46 / 45 / 46, C4 39 / 48 / 37, final 21 / 17 / 15).
+- **Metrics:** as in Phase 1 (`analysis/p3_oversmoothing.py`), on x_k, the node states layer k passes on (k = 4 is what the readout pools), eval mode. For C4, x_k = x_{k-1} + relu(LN(conv_k(x_{k-1}))). Each metric is averaged over shots, then over seeds.
+- **Output:** analysis/phase3_results/p4_trained_smoothing.json. The ledger keys `smooth.*` in `gml_final/numbers.md` are computed from it.
+
+**Layer 4, mean of 3 seeds**
+
+| Metric | C0, untrained | C0, trained 35k | C4, untrained | C4, trained 35k | C4 + fresh (final) |
+|---|---|---|---|---|---|
+| Cosine, all node pairs | 0.994 | 0.517 | 0.981 | 0.493 | 0.246 |
+| Cosine, fired vs unfired detectors | 0.994 | 0.491 | 0.974 | -0.033 | -0.104 |
+| Pairs with cosine > 0.99 | 0.735 | 0.153 | 0.281 | 0.000 | 0.000 |
+| Dirichlet energy (scale-free) | 3.14 | 10.9 | 0.026 | 2.02 | 6.53 |
+| Effective rank (of 96) | 1.04 | 1.42 | 5.11 | 4.48 | 3.75 |
+| Mean norm: fired / unfired / boundary | 58.3 / 55.0 / 372.7 | 0.82 / 0.67 / 16.8 | 19.8 / 19.8 / 19.8 | 6.26 / 2.29 / 7.92 | 5.43 / 1.34 / 12.7 |
+| Linear probe for the fired bit (balanced accuracy) | 0.758 | 0.665 | 1.000 | 1.000 | 1.000 |
+
+**Linear probe for the fired bit, layers 0 to 4**
+- C0 untrained: 1.000, 0.999, 0.918, 0.831, 0.758
+- C0 trained 35k: 1.000, 0.997, 0.913, 0.801, 0.665 (seeds at layer 4: 0.676, 0.661, 0.658)
+- C4 untrained, C4 trained 35k, final: 1.000 at every layer for every seed
+
+**Cosine fired vs unfired, layers 1 to 4:** C0 trained 0.106, 0.297, 0.596, 0.491. C4 trained 0.147, 0.012, -0.023, -0.033.
+
+## Interpretation (smoothing inside the trained models)
+- **At initialisation, C0 oversmooths at d=5 as at d=3:** layer-4 cosine 0.994, 74% of pairs above 0.99, rank 1.04. Norms grow about 14x (fired) to 16x (unfired) for detectors and about 107x at the boundary node from layer 0 to layer 4.
+- **After training, C0 is no longer oversmoothed in the classic sense:** cosine 0.52, and the Dirichlet energy is high (10.9), not near 0. "The trained default oversmooths" is not supported.
+- **What persists in trained C0:**
+  - Its states stay near rank 1 (1.42).
+  - The boundary node's norm is about 25x an unfired detector's.
+  - The fired bit becomes hard to read linearly with depth (probe 1.00 → 0.66), and fired and unfired detectors become more alike (cosine 0.11 at layer 1, 0.49 at layer 4).
+- **C4 keeps the local signal:** fired and unfired states are about orthogonal from layer 2 on, the probe stays at 1.00, the rank stays about 4.5, and the boundary norm is about 3.5x an unfired detector's.
+- **C4 at initialisation** also has high cosine (0.98) but no norm blow-up and rank 5. What it prevents at the start is the blow-up and the rank collapse, not high cosine.
+- **Caveats:**
+  - The probe at 1.00 for C4 is partly by construction: the skip path carries the encoder output, which contains the fired bit, to every layer.
+  - A linear probe only measures linear readability; C0 may still carry the fired bit non-linearly.
+  - The link to errors is correlational: a large representational difference comes with a 10.6% error difference at 35k (S5).
+- **Wording for C2:** "Residual + LayerNorm keeps each detector's own signal through depth, which the default backbone loses; the classic oversmoothing seen at initialisation is mostly undone by training in both."
