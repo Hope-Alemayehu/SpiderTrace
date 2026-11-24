@@ -927,3 +927,97 @@ The ZX vs Raw rows go in both directions across seeds, which is what run-to-run 
   - Residual-only and LayerNorm-only with fresh data (3 runs each).
   - Optionally, a longer schedule (for example 100 epochs) with fresh data.
   - Drop the auxiliary target unless a λ grid or a node-level head is tried.
+
+## Phase 3, S5 (35k training graphs: C0, C4, C4 + aux ZX)
+- **Date:** 2026-11-24
+- **Where:** Kaggle, GPU, torch 2.11.0+cu130, torch_geometric 2.8.1, stim 1.16.0, PyMatching 2.4.0. One session; runs started 05:54 (C4), 06:32 (C4 + ZX) and 07:11 (C0) UTC.
+- **Commit:** ba42925 (clean) for all three.
+- **Purpose:**
+  - Does the C4 backbone (residual + LayerNorm) help at a small fixed training set too, and by how much compared with 300k?
+  - Does the auxiliary ZX target help when data is scarce, where extra supervision would matter most?
+- **Commands** (common part: `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 35000 --seeds 0 1 2 --epochs 60 --patience 60 --lr 1e-3 --lr-schedule cosine --lr-min 1e-5 --grad-clip 1.0 --eval-set data/eval_d5_p0.003_seed12347_200k.npz --expect-mwpm-errors 36 --device cuda`):
+  - C0: `--arms A --outdir /kaggle/working/results/base_v2_35k`
+  - C4: `--arms A --residual --norm layer --outdir /kaggle/working/results/resln_v2_35k`
+  - C4 + ZX: `--arms ZX --lambdas 0.1 --aux-data-qubits-only --aux-class-weight inv-freq --residual --norm layer --outdir /kaggle/working/results/aux_zx_35k`
+- **Setup:**
+  - Recipe v2, as S3 and S4. Training set: the 35,000 base shots of the split (seed 12345), no extra shots. Val 7,500, test 7,500.
+  - Parameters: C0 78,053, C4 78,821, C4 + ZX 107,721 (aux head used in training only).
+  - ZX class weights I/X/Y/Z 0.27 / 7.61 / 17.30 / 11.65, from the 35k training split (S4 at 300k: 0.27 / 7.59 / 17.05 / 11.59).
+- **Test sets:** the same primary set (`--expect-mwpm-errors 36` passed; correlated matching 21). All three runs loaded the stored eval set with all four checks passing, sha256 4b9504da...2772; MWPM 664, correlated matching 475.
+- **Compared against:** S3 C0 and S3 C4 at 300k (results/run_20261122T202714Z_d5_p0.003.json, results/run_20261123T003558Z_d5_p0.003.json). Same code path, recipe and test shots; only the training-set size differs.
+- **Files** (each with a `_weights/` folder of 3 files and a `_bigtest_probs.npz`):
+  - C0: results/run_20261124T074644Z_d5_p0.003.json
+  - C4: results/run_20261124T063211Z_d5_p0.003.json
+  - C4 + ZX: results/run_20261124T071047Z_d5_p0.003.json
+
+**Big test set (200,000 shots, MWPM 664 errors, correlated matching 475)**
+
+| Run | Train graphs | Seed 0 | Seed 1 | Seed 2 | Mean | Range | Ratio to MWPM | Ratio to corr. matching |
+|---|---|---|---|---|---|---|---|---|
+| C0 | 35k | 2,491 | 2,502 | 2,371 | 2,454.7 | 131 | 3.70 | 5.17 |
+| C4 | 35k | 2,191 | 2,245 | 2,150 | 2,195.3 | 95 | 3.31 | 4.62 |
+| C4 + aux ZX | 35k | 2,160 | 2,190 | 2,431 | 2,260.3 | 271 | 3.40 | 4.76 |
+| C0 (S3) | 300k | 1,272 | 1,249 | 1,184 | 1,235.0 | 88 | 1.86 | 2.60 |
+| C4 (S3) | 300k | 968 | 972 | 986 | 975.3 | 18 | 1.47 | 2.05 |
+
+- Paired against MWPM, every 35k run is significantly worse (fixed / newly wrong: C0 192 / 2,019, 182 / 2,020, 188 / 1,895; C4 177 / 1,704, 178 / 1,759, 172 / 1,658; ZX 165 / 1,661, 176 / 1,702, 174 / 1,941; every p below 1e-300).
+- Zero-fired shots: 15,307; 0 true and 0 predicted flips for every run, as before.
+
+**Decision rule**
+- **C4 beats C0 at 35k.** The worst C4 run (2,245) is below the best C0 run (2,371). The mean gap of 259.3 exceeds both ranges (131 and 95). It passes.
+- **Same gap as at 300k:** 259.3 errors at 35k, 259.7 at 300k (S3). As a share of C0's errors: 10.6% at 35k, 21.0% at 300k.
+- **Same data effect for both backbones:** going from 35k to 300k removes 1,219.7 errors (C0) and 1,220.0 (C4).
+- **C4 + ZX vs C4 at 35k: no decision either way.** ZX's mean is 65.0 errors higher. Two ZX runs (2,160, 2,190) are level with C4's best runs, and the third (2,431) is the worst of the six. The gap is below both ranges (95 and 271). At 300k (S4), C4 beat ZX by 127.7.
+- **Same-seed paired McNemar** (reported, not decisive; fixed = first wrong & second right):
+
+| Second vs first | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| C4 vs C0 (35k) | 787 / 487, p = 3.9e-17 | 799 / 542, p = 2.4e-12 | 786 / 565, p = 2.0e-9 |
+| ZX vs C4 (35k) | 520 / 489, p = 0.34 | 544 / 489, p = 0.093 | 461 / 742, p = 5.1e-16 |
+
+**Primary test set (7,500 shots, MWPM 36 errors, correlated matching 21)**
+
+| Run | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| C0, 35k | 98 | 96 | 87 |
+| C4, 35k | 75 | 84 | 77 |
+| C4 + aux ZX, 35k | 75 | 80 | 85 |
+
+- All worse than MWPM: C0 p = 4.7e-12, 2.7e-11, 1.7e-9; C4 p = 1.2e-6, 4.5e-9, 2.8e-7; ZX p = 1.5e-7, 1.0e-7, 4.8e-9.
+- C0 at 35k is at the level of Run 6 (same data, old recipe, 100 epochs, 1 run: 93 errors).
+
+**Aux head (ZX, test set, λ 0.1; not collapsed)**
+- Non-identity recall 0.826 / 0.826 / 0.822. Precision 27.0% / 28.0% / 27.0%, against a true non-identity density of 0.069 (about 4x the base rate).
+- It predicts non-identity on 0.210 / 0.202 / 0.209 of slots, about 3x the true density.
+- At 300k (S4): recall 0.888 to 0.892, precision 38.5% to 40.4%, predicted 0.152 to 0.158. The head is weaker with less data, but it still learns.
+
+**Training**
+
+| Run | Seed | best_epoch (of 60) | Epoch-1 val loss | Best val loss (train loss at that epoch) | Val spikes (>1.3x) | s / epoch |
+|---|---|---|---|---|---|---|
+| C0, 35k | 0 / 1 / 2 | 56 / 55 / 50 | 0.455 / 0.440 / 0.456 | 0.0408 (0.0344) / 0.0355 (0.0331) / 0.0340 (0.0335) | none / 19 / 18 | 11.0 / 11.0 / 11.0 |
+| C4, 35k | 0 / 1 / 2 | 50 / 59 / 59 | 0.680 / 0.504 / 0.726 | 0.0333 (0.0308) / 0.0348 (0.0301) / 0.0332 (0.0304) | 16 / 2, 5, 8, 28 / 4, 7, 12 | 11.7 / 11.7 / 11.8 |
+| C4 + aux ZX, 35k | 0 / 1 / 2 | 49 / 42 / 59 | 1.475 / 1.446 / 1.035 | 0.0807 (0.0773) / 0.0822 (0.0737) / 0.0856 (0.0765) | none / none / 2 | 11.8 / 11.8 / 11.8 |
+
+- The ZX losses include λ times the aux cross-entropy, so they are not comparable with the A-arm losses.
+- All runs ran the full 60 epochs. C4's val loss spikes early (epochs 2 to 16, plus 28 in seed 1), but each run recovers.
+- **GNN inference on the big test:** 29.2 to 29.3 s (C0), 30.4 to 30.8 s (C4), 30.5 to 30.9 s (ZX).
+
+## Interpretation (Phase 3, S5)
+- **Backbone (data):**
+  - C4 beats C0 at 35k as well as at 300k, by the same absolute amount (about 260 errors).
+  - Over this range the backbone effect and the data effect add up: each backbone drops by about 1,220 errors from 35k to 300k.
+  - In relative terms the backbone matters more with more data (10.6% → 21.0% of C0's errors), because the total shrinks while the gap stays the same.
+- **"Less data needed" (C2b): not shown yet.** Two sizes per backbone cannot say how many graphs C0 needs to match C4.
+  - Under an assumption, not a measurement: if C0's errors fall linearly in log(training graphs) between its 35k and 300k means, C0 would need about 55,000 graphs to match C4 at 35k, and about 474,000 (an extrapolation) to match C4 at 300k. Both are about 1.6x the data. Values from `gml_final/numbers.md` key `scaling.v2_loglinear_equiv_graphs`.
+  - The 100k runs test the log-linear assumption directly.
+- **Auxiliary ZX target at low data (data):**
+  - No gain at 35k either. The hypothesis that extra supervision pays off when data is scarce is not supported.
+  - Unlike at 300k, it is also not clearly harmful: one bad run out of three decides the mean, and the same-seed McNemar goes both ways (seeds 0 and 1 not significant, seed 2 strongly against ZX).
+  - The head learns less at 35k (precision 27% vs about 39%), so the extra target is noisier exactly where it was meant to help.
+- **Hypotheses, not tested:**
+  - λ = 0.1 is still the only weight tried.
+  - The early val spikes in C4 at 35k (none at 300k in seeds 1 and 2) may come from the small training set and the full lr of 1e-3 at the start of the cosine schedule.
+- **Next:**
+  - C0 and C4 at 100k (3 runs each): a third point on the scaling curve, and a direct check of the log-linear assumption.
+  - Residual-only and LayerNorm-only at 300k: which half of C4 matters.
