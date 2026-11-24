@@ -824,3 +824,106 @@ All four runs use the same model, seed 0, up to 100 epochs, and the same 7,500 t
   - So the difference is in the printed probability digits (`str(dem)` prints full float precision, for example `0.0075628575999998`), most likely last-digit rounding differences between platforms. This is not confirmed: the file stores only the hash.
   - **Loader change:** a fingerprint mismatch is now a warning, not a failure, but only when the bit-consistency and MWPM checks both pass. If either fails, loading still fails, and the error says the fingerprint also differs. The loader prints each check's result, and runs record them in `big_test.eval_set.checks`. On Windows the canonical file now loads with `dem_fingerprint FAIL` (warning) and the three other checks passing.
 - **From now on:** every run uses `--eval-set data/eval_d5_p0.003_seed12347_200k.npz` in place of `--big-test-shots 200000`.
+
+## Phase 3, S4 (auxiliary targets and fresh training data, on C4)
+- **Date:** 2026-11-23 to 2026-11-24
+- **Where:** Kaggle, GPU, torch 2.11.0+cu130, stim 1.16.0. Two separate sessions.
+- **Runs:**
+  - **aux_C4_v2:** commit 986a728 (clean), started 10:21 UTC. Raw and ZX arms, seeds 0 1 2. 986a728 only adds analysis and result files on top of 76da5a7 (the S3 C4 commit), so the training code is the S3 code.
+  - **C4_fresh_v2:** commit ed15ffa (clean), started 19:41 UTC. A arm, seeds 0 1 2, `--fresh-train`.
+- **Commands:**
+  - aux: `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 300000 --arms Raw ZX --seeds 0 1 2 --lambdas 0.1 --aux-data-qubits-only --aux-class-weight inv-freq --residual --norm layer --epochs 60 --patience 60 --lr 1e-3 --lr-schedule cosine --lr-min 1e-5 --grad-clip 1.0 --big-test-shots 200000 --expect-mwpm-errors 36 --device cuda --outdir /kaggle/working/results/aux_C4_v2`
+  - fresh: `python qec_run.py --d 5 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 300000 --fresh-train --arms A --seeds 0 1 2 --residual --norm layer --epochs 60 --patience 60 --lr 1e-3 --lr-schedule cosine --lr-min 1e-5 --grad-clip 1.0 --eval-set data/eval_d5_p0.003_seed12347_200k.npz --expect-mwpm-errors 36 --device cuda --outdir /kaggle/working/results/C4_fresh_v2`
+- **Setup:** both on the C4 backbone (residual + LayerNorm) with recipe v2, as S3 C4.
+  - **aux:** λ fixed at 0.1 (no grid), aux head on the 25 data qubits, inverse-frequency class weights from the training split. Raw weights I/X/Y/Z 0.26 / 10.98 / 17.19 / 18.92, ZX 0.27 / 7.59 / 17.05 / 11.59. 107,721 parameters with the aux head (78,821 without; the head is used in training only). Same fixed 300,000 training shots as S3 (35,000 base + 265,000 from seed 12346).
+  - **fresh:** 300,000 new shots every epoch, epoch e from sampler seed 13,345,000 + e (13,345,001 to 13,345,060), recorded in `provenance.fresh_train`. No fixed training set.
+- **Test sets:** the same primary set (`--expect-mwpm-errors 36` passed) and the same 200,000 big-test shots. The aux run sampled its big test on Kaggle (seed 12347); its MWPM wrong-shot list equals the stored eval set's. The fresh run loaded the stored eval set with all four checks passing, including the strict DEM fingerprint (Kaggle Linux). Its JSON records correlated matching as 475 errors, the same wrong shots as the canonical value.
+- **Compared against:** the S3 C4 runs (results/run_20261123T003558Z_d5_p0.003.json), "C4" below. Same code, recipe, backbone and test shots.
+- **Files:**
+  - aux: results/run_20261123T184608Z_d5_p0.003.json
+  - fresh: results/run_20261123T232850Z_d5_p0.003.json, with results/run_20261123T232850Z_d5_p0.003_weights/ (3 files, 327,787 bytes each) and results/run_20261123T232850Z_d5_p0.003_bigtest_probs.npz (2,024,720 bytes)
+
+**Big test set (200,000 shots, MWPM 664 errors, correlated matching 475)**
+
+| Run | Seed 0 | Seed 1 | Seed 2 | Mean | Range | Ratio to MWPM | Ratio to corr. matching |
+|---|---|---|---|---|---|---|---|
+| C4 (S3) | 968 | 972 | 986 | 975.3 | 18 | 1.47 | 2.05 |
+| C4 + aux raw | 1,133 | 1,165 | 1,060 | 1,119.3 | 105 | 1.69 | 2.36 |
+| C4 + aux ZX | 1,036 | 1,161 | 1,112 | 1,103.0 | 125 | 1.66 | 2.32 |
+| C4 + fresh data | 921 | 823 | 848 | 864.0 | 98 | 1.30 | 1.82 |
+
+- Paired against MWPM, every run of every arm is significantly worse (fresh: 168 / 425, 176 / 335, 159 / 343; p from 1.8e-12 to 1.2e-26). The same holds against correlated matching (fresh: p from 1.8e-38 to 3.3e-56).
+- Zero-fired shots: 15,307; 0 true and 0 predicted flips for every run, as before.
+
+**Decision rule** (every B run beats every A run on the big test, and the mean gap exceeds the range within either config)
+- **Fresh data beats C4.** The worst fresh run (921) is below the best C4 run (968). The mean gap of 111.3 exceeds both ranges (98 and 18). It passes, but the gap only just exceeds the fresh runs' own range.
+- **C4 beats both aux arms.** The worst C4 run (986) is below the best Raw (1,060) and ZX (1,036) runs. Gaps 144.0 (Raw) and 127.7 (ZX), above all ranges. The auxiliary target makes the model worse.
+- **ZX vs Raw: no difference.** Gap 16.3 errors, ranges 105 and 125; neither config's runs all beat the other's.
+- **Same-seed paired McNemar** (reported, not decisive; fixed = first wrong & second right):
+
+| Second vs first | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| fresh vs C4 | 285 / 238, p = 0.044 | 284 / 135, p = 2.7e-13 | 299 / 161, p = 1.2e-10 |
+| ZX vs C4 | 264 / 332, p = 0.006 | 267 / 456, p = 2.0e-12 | 286 / 412, p = 2.1e-6 |
+| Raw vs C4 | 238 / 403, p = 7.4e-11 | 252 / 445, p = 2.5e-13 | 233 / 307, p = 0.0017 |
+| ZX vs Raw | 380 / 283, p = 1.9e-4 | 325 / 321, p = 0.91 | 306 / 358, p = 0.048 |
+
+The ZX vs Raw rows go in both directions across seeds, which is what run-to-run noise looks like.
+
+**Primary test set (7,500 shots, MWPM 36 errors, correlated matching 21)**
+
+| Run | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| C4 (S3) | 41 | 36 | 38 |
+| C4 + aux raw | 52 | 53 | 45 |
+| C4 + aux ZX | 47 | 50 | 49 |
+| C4 + fresh data | 40 | 30 | 35 |
+
+- Fresh vs MWPM: 7 / 11 (p = 0.48), 9 / 3 (p = 0.15), 5 / 4 (p = 1.0). Level with MWPM on this set; seed 1 has fewer errors than MWPM, not significantly. As before, this set is too small to resolve the gap the big test shows.
+- ZX vs MWPM: p = 0.013, 0.020, 0.019 (worse). ZX vs Raw: p = 0.42, 0.73, 0.54.
+
+**Aux heads (test set, selected λ 0.1; not collapsed)**
+- Raw: non-identity recall 0.917 / 0.917 / 0.915. Of the slots it predicts as non-identity, 43.0% / 43.5% / 44.3% have the exact Pauli right. The true non-identity density is 0.051, and it predicts non-identity on 0.109 / 0.107 / 0.105 of slots.
+- ZX: recall 0.892 / 0.888 / 0.892, precision 40.4% / 38.5% / 39.2%, true density 0.069, predicted 0.152 / 0.158 / 0.156.
+- So the heads learn real structure (precision about 6 to 9x the base rate) and over-predict non-identity about 2x, as the class weights push them to.
+
+**Training**
+
+| Run | Seed | best_epoch (of 60) | Epoch-1 val loss | Best val loss (train loss at that epoch) | Val spikes (>1.3x) | s / epoch |
+|---|---|---|---|---|---|---|
+| C4 (S3) | 0 / 1 / 2 | 45 / 42 / 55 | 0.164 / 0.170 / 0.149 | 0.0156 (0.0130) / 0.0143 (0.0126) / 0.0151 (0.0110) | 18, 31 / none / none | 81.6 / 81.4 / 81.5 |
+| C4 + aux raw | 0 / 1 / 2 | 51 / 48 / 43 | 0.180 / 0.181 / 0.178 | 0.0450 (0.0410) / 0.0450 (0.0407) / 0.0429 (0.0420) | none | 83.0 / 83.2 / 83.2 |
+| C4 + aux ZX | 0 / 1 / 2 | 46 / 42 / 48 | 0.198 / 0.173 / 0.207 | 0.0509 (0.0502) / 0.0535 (0.0512) / 0.0519 (0.0501) | none | 83.2 / 83.2 / 83.1 |
+| C4 + fresh data | 0 / 1 / 2 | 60 / 58 / 60 | 0.174 / 0.152 / 0.154 | 0.0150 (0.0142) / 0.0136 (0.0139) / 0.0130 (0.0135) | none / 7 / none | 74.8 / 74.7 / 74.7 |
+
+- The aux losses include λ times the aux cross-entropy, so they are not comparable with the A-arm losses.
+- **Fresh data:**
+  - Train loss at the best epoch is now level with val loss (C4 on the fixed set: train 0.011 to 0.013 below val 0.014 to 0.016).
+  - The best epochs sit at the end of the schedule (58 to 60), so the runs were still improving when the cosine schedule ended.
+  - Epochs are 8% faster than C4's (batches built from detector bits, no PyG objects or collation).
+- **GNN inference on the big test:** 29.7 to 30.8 s per run (fresh), 30.1 to 30.3 s (aux).
+
+**Saved models (fresh run): checked on another machine**
+- The weights and probabilities came from the Kaggle output bundle. The individual downloads are identical to the bundle's files. The bundle's JSON has the same content as results/run_20261123T232850Z_d5_p0.003.json; only the whitespace differs.
+- Reloading each seed's weights on Windows CPU (`torch.load(..., weights_only=True)`) and predicting the stored eval set reproduces the run's wrong-shot list exactly (921, 823, 848). The probabilities agree with the saved GPU values to within 3e-6.
+- **Ensembles of the 3 fresh runs:** averaging the saved probabilities gives 826 errors, majority vote 819. The best single run makes 823. Ensemble vs that run: 79 fixed, 82 newly wrong, p = 0.87.
+
+## Interpretation (Phase 3, S4)
+- **Fresh data (data):**
+  - Fresh data passes the rule on top of C4: 975 → 864 mean errors, 1.47x → 1.30x MWPM, at slightly lower GPU time per epoch.
+  - The fixed 300,000-shot set was limiting the C4 model: its train/val gap closes with fresh shots, and the best epoch moves to the end of the schedule.
+  - Run-to-run spread is larger than C4's (range 98 vs 18). The pass is narrow on the range term.
+- **Auxiliary targets (data):**
+  - Neither auxiliary target helps. Both make the C4 model clearly worse (by 128 and 144 errors), and the ZX-propagated target is no better than the raw one.
+  - This is the first post-fix ZX test at d=5, and the core SpiderTrace hypothesis is not supported in this setting.
+  - The heads are alive (precision 6 to 9x the base rate), so this is not a collapsed-head artefact.
+- **Hypotheses, not tested:**
+  - λ = 0.1 may be too large for this backbone. No λ grid was run, so "aux hurts" holds for λ = 0.1 only.
+  - The aux head reads 25 per-qubit targets from one pooled graph vector. It may compete with the flip head for the same 288 dimensions. A node-level aux head (targets read from node states) would not.
+  - Fresh data plus a longer schedule (best epochs at the end) may improve further.
+- **Ensembles (data):** 3-run ensembles land at the best single run's level (819 to 826 vs 823), not below it. They remove the risk of a bad run rather than improving on the best.
+- **Next:**
+  - Make fresh data part of the baseline recipe.
+  - Residual-only and LayerNorm-only with fresh data (3 runs each).
+  - Optionally, a longer schedule (for example 100 epochs) with fresh data.
+  - Drop the auxiliary target unless a λ grid or a node-level head is tried.
