@@ -1009,7 +1009,7 @@ The ZX vs Raw rows go in both directions across seeds, which is what run-to-run 
   - Over this range the backbone effect and the data effect add up: each backbone drops by about 1,220 errors from 35k to 300k.
   - In relative terms the backbone matters more with more data (10.6% → 21.0% of C0's errors), because the total shrinks while the gap stays the same.
 - **"Less data needed" (C2b): not shown yet.** Two sizes per backbone cannot say how many graphs C0 needs to match C4.
-  - Under an assumption, not a measurement: if C0's errors fall linearly in log(training graphs) between its 35k and 300k means, C0 would need about 55,000 graphs to match C4 at 35k, and about 474,000 (an extrapolation) to match C4 at 300k. Both are about 1.6x the data. Values from `gml_final/numbers.md` key `scaling.v2_loglinear_equiv_graphs`.
+  - Under an assumption, not a measurement: if C0's errors fall linearly in log(training graphs) between its 35k and 300k means, C0 would need about 55,000 graphs to match C4 at 35k, and about 474,000 (an extrapolation) to match C4 at 300k. Both are about 1.6x the data. Values from `gml_final/numbers.md` key `scaling.v2_loglinear_equiv_graphs`. (Superseded by S6: the 100k runs tested this assumption and it held; that key was replaced by `scaling.v2_loglinear_check_100k`, `scaling.v2_loglinear_fit` and `scaling.v2_equiv_data_factor`.)
   - The 100k runs test the log-linear assumption directly.
 - **Auxiliary ZX target at low data (data):**
   - No gain at 35k either. The hypothesis that extra supervision pays off when data is scarce is not supported.
@@ -1065,3 +1065,76 @@ The ZX vs Raw rows go in both directions across seeds, which is what run-to-run 
   - A linear probe only measures linear readability; C0 may still carry the fired bit non-linearly.
   - The link to errors is correlational: a large representational difference comes with a 10.6% error difference at 35k (S5).
 - **Wording for C2:** "Residual + LayerNorm keeps each detector's own signal through depth, which the default backbone loses; the classic oversmoothing seen at initialisation is mostly undone by training in both."
+
+## Phase 3, S6 (100k training graphs: C0 and C4)
+- **Date:** 2026-11-24
+- **Where:** Kaggle, GPU, torch 2.11.0+cu130, torch_geometric 2.8.1, stim 1.16.0, PyMatching 2.4.0. One session; C4 started 09:00 UTC, C0 10:34 UTC.
+- **Commit:** ba42925 (clean) for both.
+- **Purpose:** a third training-set size, to test the assumption written down in S5. That assumption was that errors fall linearly in log(training graphs) between 35k and 300k, which gives about 1.6x data equivalence for C4.
+- **Commands** (common part as S5, with `--train-shots 100000`):
+  - C0: `--arms A --outdir /kaggle/working/results/base_v2_100k`
+  - C4: `--arms A --residual --norm layer --outdir /kaggle/working/results/resln_v2_100k`
+- **Setup:** recipe v2. Training set: the 35,000 base shots plus the first 65,000 extra shots (seed 12346, the same extra stream as the 300k runs). So the 35k, 100k and 300k training sets are nested. Val 7,500, test 7,500. C0 has 78,053 parameters, C4 78,821.
+- **Test sets:** the same primary set (`--expect-mwpm-errors 36` passed). Both runs loaded the stored eval set with all four checks passing (sha256 4b9504da...2772).
+- **Files** (each with a `_weights/` folder of 3 files and a `_bigtest_probs.npz`):
+  - C0: results/run_20261124T120138Z_d5_p0.003.json
+  - C4: results/run_20261124T103415Z_d5_p0.003.json
+
+**C0 seed 0 failed to train**
+- Epoch 1: train loss 1.619, gradient norm max 9,152 (64% of steps clipped). From epoch 2 to 60, train loss stayed at 0.430 to 0.431, val loss at 0.439 to 0.443, val recall 0.000. Best epoch 2.
+- The saved model outputs the same probability, 0.160, on all 200,000 big-test shots and never predicts a flip. Its 30,353 big-test errors are exactly the shots with a true flip; 1,110 on the primary set.
+- Epoch-1 gradient spikes are not unique to this run. C0 seeds 1 and 2 had 4,067 and 2,035, and C4 2,304 / 2,414 / 2,179 (every step clipped). All of those recovered.
+- **Tally on the big test so far:** C0 under recipe v2, 1 failed run of 9 (S3, S5, S6). C4-backbone runs, 0 of 21 (S3 C4; S4 aux Raw, aux ZX and fresh; S5 C4 and C4 + ZX; S6 C4). The ledger flags failed runs as `<run>.failed_runs`.
+
+**Big test set (200,000 shots, MWPM 664 errors, correlated matching 475)**
+
+| Run | Train graphs | Seed 0 | Seed 1 | Seed 2 | Mean | Range | Ratio to MWPM | Ratio to corr. matching |
+|---|---|---|---|---|---|---|---|---|
+| C0 | 100k | (30,353, failed) | 1,913 | 1,867 | 1,890.0 (2 runs) | 46 | 2.85 | 3.98 |
+| C4 | 100k | 1,631 | 1,626 | 1,503 | 1,586.7 | 128 | 2.39 | 3.34 |
+
+- Paired against MWPM, every trained run is significantly worse (fixed / newly wrong: C0 seeds 1 and 2, 179 / 1,428 and 199 / 1,402; C4 196 / 1,163, 192 / 1,154, 200 / 1,039; p below 1e-136).
+- Zero-fired shots: 15,307; 0 predicted flips for every run, including the failed one.
+
+**Decision rule, C4 vs C0 at 100k**
+- **As written (all 3 runs): not passed.** Every C4 run beats every C0 run, but the failed run makes C0's range 28,486, larger than the mean gap of 9,791.
+- **Without the failed run: passes.** The worst C4 run (1,631) is below the best remaining C0 run (1,867). Gap 303.3, ranges 46 (2 runs) and 128. Both versions are in the ledger: `rule.resln_v2_100k_vs_base_v2_100k` and `..._excl_failed`.
+- **Same-seed paired McNemar** (C4 vs C0, fixed = C0 wrong & C4 right): seed 0 29,305 / 583 (failed run); seed 1 787 / 500, p = 1.2e-15; seed 2 831 / 467, p = 3.6e-24.
+
+**Primary test set (7,500 shots, MWPM 36 errors)**
+- C0: 1,110 (failed) / 79 / 73. C4: 64 / 61 / 63.
+- All trained runs are worse than MWPM: C0 p = 1.0e-7, 2.0e-6; C4 p = 2.3e-4, 8.0e-4, 2.7e-4.
+
+**Training**
+
+| Run | Seed | best_epoch (of 60) | Epoch-1 val loss | Best val loss (train loss at that epoch) | Val spikes (>1.3x) | s / epoch |
+|---|---|---|---|---|---|---|
+| C0, 100k | 0 / 1 / 2 | 2 / 52 / 54 | 0.439 / 0.381 / 0.429 | 0.4392 (0.4314) / 0.0281 (0.0256) / 0.0272 (0.0239) | none / 8 / none | 27.8 / 28.1 / 28.1 |
+| C4, 100k | 0 / 1 / 2 | 43 / 34 / 37 | 0.449 / 1.337 / 0.508 | 0.0223 (0.0222) / 0.0244 (0.0224) / 0.0214 (0.0208) | none / none / 9 | 30.1 / 30.2 / 30.2 |
+
+- **GNN inference on the big test:** 30.1 to 30.2 s (C0), 31.8 to 31.9 s (C4).
+
+**Scaling, recipe v2, fixed training sets** (means; C0 at 100k without the failed run)
+
+| Train graphs | C0 | C4 | Gap |
+|---|---|---|---|
+| 35k (S5) | 2,454.7 | 2,195.3 | 259.3 |
+| 100k (S6) | 1,890.0 | 1,586.7 | 303.3 |
+| 300k (S3) | 1,235.0 | 975.3 | 259.7 |
+
+- **The S5 assumption holds:** interpolating each backbone's 35k and 300k means in log(training graphs) predicts 1,858.7 (C0) and 1,599.2 (C4) at 100k; observed 1,890.0 and 1,586.7 (+31.3 and -12.5).
+- **Least-squares fit, errors = a + b ln(N), through the three means:**
+  - C0: b = -567.9 errors per e-fold of data; residuals -10.7, +20.9, -10.2.
+  - C4: b = -567.8; residuals +4.3, -8.3, +4.1.
+  - The two lines are parallel: C4 shifts the curve and leaves the slope unchanged.
+- **Data equivalence:** on C0's fitted line, C0 needs 1.61x, 1.64x and 1.61x the training graphs to match C4's mean at 35k, 100k and 300k. The 300k value extrapolates C0's line slightly beyond 300k.
+- Ledger keys: `scaling.v2_big`, `scaling.v2_loglinear_check_100k`, `scaling.v2_loglinear_fit`, `scaling.v2_equiv_data_factor`.
+
+## Interpretation (Phase 3, S6)
+- **C2b is measured, not assumed:** over 35k to 300k fixed training graphs, residual + LayerNorm is worth about 1.6x the training data. The curves are straight in log(data) and parallel, so the factor is the same at every size tested.
+- **Data dominates the backbone:** an e-fold more data removes about 568 errors for either backbone. The backbone change removes about 260 to 300, about half an e-fold of data (0.46 to 0.53), hence the factor of about 1.6.
+- **Stability (data, small numbers):** one C0 run collapsed to a constant output and never trained; no C4-backbone run has. This fits the S5 smoothing analysis (C0's norms blow up at initialisation, C4's do not), but 1 failure in 9 runs is too few to estimate a failure rate.
+- **The decision rule's range term is not robust to a failed run.** One collapsed run hides a clear effect. Proposal: report failed runs separately (defined as predicting no flip on every shot) and apply the rule to the runs that trained, with the failure count stated. A replacement seed would restore 3 runs at 100k.
+- **Next:**
+  - Optional: C0 at 100k, seed 3, as a replacement (about 30 min GPU).
+  - Residual-only and LayerNorm-only at 300k (session C), as planned.
