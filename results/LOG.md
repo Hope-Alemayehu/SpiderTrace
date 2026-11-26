@@ -1138,3 +1138,58 @@ The ZX vs Raw rows go in both directions across seeds, which is what run-to-run 
 - **Next:**
   - Optional: C0 at 100k, seed 3, as a replacement (about 30 min GPU).
   - Residual-only and LayerNorm-only at 300k (session C), as planned.
+
+## Phase 3, S7 (d=3: does the exchange rate transfer?)
+- **Date:** 2026-11-25 (one Kaggle commit run, CPU only; the GPU quota was used up).
+- **Where:** Kaggle CPU, torch 2.11.0+cpu, stim 1.16.0, PyMatching 2.4.0. Runs started 11:01 (C0 35k), 12:36 (C4 35k) and 14:14 UTC (C0 100k).
+- **Commit:** 0a7cf19. The runs record `git_dirty: True`; the only listed file is the untracked d=3 eval set the same cell had just exported (`?? data/eval_d3_p0.003_seed12347_200k.npz`). The code is the committed code.
+- **Purpose:** test whether C4's data factor (about 1.6x at d=5, S6) holds at another code distance.
+- **Setup:** d=3, p=0.003, recipe v2, seeds 0 1 2. Same split seeds as d=5 (split 12345, extra training shots 12346), so the training sets are nested (35k inside 100k). 25 nodes and 156 directed edges per graph (d=5: 121 and 1,004). C0 has 78,053 parameters, C4 78,821. `--device cpu`. The cell is in this session's chat: a `%%bash` loop with a time guard that starts a run only if its projected time fits in 11 h.
+- **Not run:** C4 at 100k and both 300k runs. The time guard skipped them: the three runs above took 7.2 h, and C4 at 100k was projected past the 11 h budget.
+- **Test sets:**
+  - Primary set: 7,500 d=3 shots from the split, MWPM 49 errors, correlated matching 52. Every run has the same MWPM wrong-shot list.
+  - Big test: a new stored set, data/eval_d3_p0.003_seed12347_200k.npz (200,000 shots, seed 12347, sha256 9432be419dab168d2e9e962f29c21671d9e777601630da26e3cf938c6766d568), exported at the start of this run by `export_eval_set.py --d 3 --p 0.003 --shots 200000 --expect-mwpm-errors 1327`. All four checks pass on Kaggle; locally (Windows) the bit and MWPM checks pass and the strict fingerprint fails, as for the d=5 set. MWPM 1,327 errors, correlated matching 1,370; 13,078 shots with a true flip.
+  - An earlier interactive export on 2026-11-25 (sha256 40350e75...) had the same seed, shot count and MWPM count; the file differs only because the header stores its export time. That copy was not used for any run.
+- **Files** (each with a `_weights/` folder of 3 files and a `_bigtest_probs.npz`):
+  - C0 35k: results/run_20261125T123552Z_d3_p0.003.json
+  - C4 35k: results/run_20261125T141354Z_d3_p0.003.json
+  - C0 100k: results/run_20261125T181032Z_d3_p0.003.json
+
+**Big test set (200,000 d=3 shots, MWPM 1,327 errors, correlated matching 1,370)**
+
+| Run | Train graphs | Seed 0 | Seed 1 | Seed 2 | Mean | Range | Ratio to MWPM |
+|---|---|---|---|---|---|---|---|
+| C0 | 35k | 1,529 | 1,518 | 1,557 | 1,534.7 | 39 | 1.16 |
+| C4 | 35k | 1,458 | 1,448 | 1,409 | 1,438.3 | 49 | 1.08 |
+| C0 | 100k | 1,342 | 1,341 | 1,382 | 1,355.0 | 41 | 1.02 |
+
+- No run failed to train (`d3_*.failed_runs` all empty).
+- **Correlated matching is worse than MWPM at d=3** (1,370 vs 1,327), unlike d=5 (475 vs 664).
+
+**Decision rule, C4 vs C0 at 35k: passes.** The worst C4 run (1,458) is below the best C0 run (1,518). Gap 96.3, ranges 39 and 49 (`rule.d3_resln_v2_35k_vs_d3_base_v2_35k`).
+
+**Primary test set (7,500 shots, MWPM 49 errors):** C0 35k 60 / 59 / 57; C4 35k 51 / 53 / 55; C0 100k 46 / 42 / 49. At 100k, C0 is level with MWPM on this set.
+
+**Training**
+
+| Run | best_epoch (of 60) | Epoch-1 val loss | Best val loss (train loss at that epoch) | Epoch-1 gradient norm max | s / epoch (CPU) |
+|---|---|---|---|---|---|
+| C0, 35k | 52 / 50 / 57 | 0.258 / 0.171 / 0.187 | 0.0219 (0.0234) / 0.0217 (0.0221) / 0.0224 (0.0231) | 665 / 142 / 137 | 29.3 / 30.5 / 31.1 |
+| C4, 35k | 54 / 51 / 56 | 0.210 / 0.207 / 0.191 | 0.0236 (0.0231) / 0.0231 (0.0213) / 0.0223 (0.0214) | 233 / 538 / 494 | 30.0 / 31.6 / 32.4 |
+| C0, 100k | 44 / 50 / 55 | 0.112 / 0.098 / 0.121 | 0.0199 (0.0212) / 0.0197 (0.0207) / 0.0207 (0.0214) | 676 / 85 / 109 | 76.0 / 78.4 / 78.1 |
+
+- **GNN inference on the big test:** 48.5 to 51.6 s per run (CPU).
+
+**Data factor at d=3 (provisional)**
+- C0's slope from its 35k and 100k means: -171.1 errors per e-fold of data (d=5: -567.9).
+- C4's gap at 35k, 96.3 errors, is 0.56 e-folds, a factor of 1.76x (`d3.data_factor`).
+- This **assumes** C4's curve is parallel to C0's between 35k and 100k. At d=5 that was measured; here it needs C4 at 100k.
+
+## Interpretation (Phase 3, S7)
+- **C4 helps at d=3 too:** it passes the rule at 35k, and the provisional data factor (1.76x) is close to d=5's 1.6x. Consistent with transfer, not yet a test of it.
+- **d=3 saturates near MWPM.** C0 at 100k is within 2% of MWPM (1,355 vs 1,327, `d3.default_100k_over_mwpm`). The remaining gap is about 28 errors, so the d=3 curve must flatten soon after 100k, and a factor measured near that floor would mean little. Drop d=3 at 300k; the d=3 factor is measurable between 35k and 100k only.
+- **Correlated matching does not help at d=3.** Its gain at d=5 (28% fewer errors than MWPM) comes from correlations that matter more at the larger distance; worth a sentence in the paper, not an investigation.
+- **Device:** the d=3 runs are on CPU and the d=5 runs on GPU, so the d=3 run spread has no GPU nondeterminism in it. d=3 is a separate check, not pooled with d=5.
+- **Next:**
+  - C4 at d=3, 100k (one CPU run, about 4 h, no GPU quota): turns the 1.76x into a two-curve comparison.
+  - Session C at d=5 when the GPU quota resets.
