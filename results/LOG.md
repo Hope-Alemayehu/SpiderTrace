@@ -1024,7 +1024,7 @@ The ZX vs Raw rows go in both directions across seeds, which is what run-to-run 
 
 ## 2026-11-24: smoothing inside the trained models (analysis, no training)
 - **Question:** C4 was motivated by the Phase 1 oversmoothing diagnosis, which was measured at initialisation (d=3) and on one trained d=3 default model. Do the trained d=5 models differ the way that motivation predicts?
-- **Where:** local Windows CPU, torch 2.11.0. Code at 083700f plus the new, uncommitted `analysis/p4_trained_smoothing.py`.
+- **Where:** local Windows CPU, torch 2.14.1+cpu (as recorded in the output JSON; corrected 2026-11-27 from "2.11.0"). Code at 083700f plus the new, uncommitted `analysis/p4_trained_smoothing.py`.
 - **Command:** `python analysis/p4_trained_smoothing.py` (defaults: 4,000 shots, probe on the first 1,000). Wall time 306 s.
 - **Models:** the saved weights of S5 C0 and S5 C4 (35k) and of S4 C4 + fresh data (the final model), seeds 0 1 2. Plus C0 and C4 before training, built as `run_arm` builds them (`_seed_all(seed)`, then `build_model`). The CUDA runs built their models on CPU from the same torch seed, so these should be their starting weights; this is not checked.
 - **Shots:** the first 4,000 shots of the stored eval set (5.02 fired detectors per shot on average, 318 with none). The file loaded with the strict DEM fingerprint failing and the bit and MWPM checks passing (Windows; the warning path from 4f759ad).
@@ -1242,3 +1242,39 @@ The ZX vs Raw rows go in both directions across seeds, which is what run-to-run 
 - **At d=3 and 100k shots, the matching-graph GNN reaches MWPM's level:** C4 is below MWPM in all 3 runs, but significantly so in only 1 of 3 paired tests. State it as "level with, nominally below MWPM", not "beats MWPM". It beats correlated matching more clearly (2 of 3 runs significant), but correlated matching is weaker than MWPM at d=3.
 - **For the paper (P1):** the exchange rate is constant across data sizes at d=5 (1.6x), and is 1.5x to 1.8x and shrinking with data at d=3. The d=5 result stays the headline; d=3 bounds it.
 - **Next:** session C at d=5 (residual-only, LayerNorm-only) when the GPU quota resets.
+
+## 2026-11-27: smoothing inside the trained d=3 models (analysis, no training)
+- **Question:** does the mechanism seen at d=5 (the default loses each detector's fired signal with depth; C4 keeps it) also appear at d=3, where C4's effect is smaller (gap 96 vs 259 at 35k)?
+- **Where:** local Windows CPU, torch 2.14.1+cpu. The JSON records commit 519b427 with uncommitted tracked changes. The run used `analysis/p4_trained_smoothing.py` with its new `--d` option, which was uncommitted at the time and was then committed unchanged in 0f482f0.
+- **Command:** `python analysis/p4_trained_smoothing.py --d 3` (defaults: 4,000 shots, probe on the first 1,000). Wall time 43 s.
+- **Models:** the saved weights of S7 C0 35k, C4 35k, C0 100k and S8 C4 100k, seeds 0 1 2, plus both architectures before training (built as `run_arm` builds them).
+- **Shots:** the first 4,000 shots of the stored d=3 eval set (sha256 9432be41...d568). These have 0.87 fired detectors per shot on average, and 2,401 have none (d=5: 5.02 and 318). So the probe sees far fewer fired detectors than at d=5.
+- **Checks:**
+  - Every reloaded trained model gives exactly its run's wrong-shot list on these shots (22 to 27 wrong each).
+  - Rerunning the d=5 analysis after the `--d` change gives per-layer metrics identical to the committed d=5 JSON.
+- **Output:** analysis/phase3_results/p4_trained_smoothing_d3.json. Ledger keys `smooth_d3.*`.
+
+**Layer 4, mean of 3 seeds (d=3)**
+
+| Metric | C0, untrained | C0, trained 35k | C0, trained 100k | C4, untrained | C4, trained 35k | C4, trained 100k |
+|---|---|---|---|---|---|---|
+| Cosine, all node pairs | 0.995 | 0.880 | 0.848 | 0.981 | 0.769 | 0.585 |
+| Cosine, fired vs unfired | 0.997 | 0.698 | 0.696 | 0.976 | 0.229 | 0.001 |
+| Pairs with cosine > 0.99 | 0.892 | 0.522 | 0.350 | 0.307 | 0.000 | 0.008 |
+| Effective rank (of 96) | 1.06 | 1.32 | 1.50 | 5.26 | 3.59 | 2.76 |
+| Linear probe for the fired bit | 0.872 | 0.886 | 0.849 | 1.000 | 1.000 | 1.000 |
+
+**Linear probe, layers 0 to 4:** C0 trained 35k 1.000, 1.000, 0.953, 0.933, 0.886; C0 trained 100k 1.000, 0.999, 0.958, 0.919, 0.849. C4 (untrained and both trained): 1.000 at every layer.
+
+## Interpretation (smoothing inside the trained d=3 models)
+- **The same mechanism at d=3:**
+  - The trained C0 states stay near rank 1 (1.3 to 1.5), and the fired bit fades with depth (layer-4 probe 0.85 to 0.89).
+  - Fired and unfired detectors converge in C0 (cosine 0.70 at layer 4), while C4 keeps them apart (0.23 and 0.00).
+  - C4 keeps the probe at 1.00.
+- **Milder than at d=5:** C0's layer-4 probe is 0.85 to 0.89 at d=3 against 0.665 at d=5. That matches the smaller backbone gap at d=3. A plausible reading, not tested: the d=3 graph has 25 nodes, so 4 layers reach most of it and less of the local signal is lost.
+- **One difference:** trained C0 at d=3 keeps more classic smoothing than at d=5 (layer-4 cosine 0.85 to 0.88, with 35% to 52% of pairs above 0.99; d=5: 0.52 and 15%).
+- **Caveats as at d=5:**
+  - The C4 probe at 1.00 is partly by construction (the skip path).
+  - A linear probe tests linear readability only.
+  - The link to errors is correlational.
+  - The d=3 probe also rests on fewer fired detectors (0.87 per shot).
