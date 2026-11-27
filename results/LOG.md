@@ -1193,3 +1193,52 @@ The ZX vs Raw rows go in both directions across seeds, which is what run-to-run 
 - **Next:**
   - C4 at d=3, 100k (one CPU run, about 4 h, no GPU quota): turns the 1.76x into a two-curve comparison.
   - Session C at d=5 when the GPU quota resets.
+
+## Phase 3, S8 (d=3: C4 at 100k)
+- **Date:** 2026-11-26. Kaggle CPU, torch 2.11.0+cpu, started 06:28 UTC.
+- **Commit:** 6e93395 (clean). The d=3 eval set now comes from the repo (committed in S7), not from a fresh export.
+- **Command:** as S7 C0 100k, plus `--residual --norm layer`: `python qec_run.py --d 3 --p 0.003 --shots 50000 --split-seed 12345 --train-shots 100000 --arms A --seeds 0 1 2 --residual --norm layer --epochs 60 --patience 60 --lr 1e-3 --lr-schedule cosine --lr-min 1e-5 --grad-clip 1.0 --eval-set data/eval_d3_p0.003_seed12347_200k.npz --device cpu --outdir /kaggle/working/results/d3_resln_v2_100k`
+- **Checks:**
+  - The cell verified the eval-set sha256 (9432be41...d568) before running.
+  - The run's four eval-set checks all pass. MWPM reproduces 1,327 on the big test and 49 on the primary set.
+  - The split is 35,000 base + 65,000 extra, the same as S7 C0 100k.
+- **File:** results/run_20261126T102141Z_d3_p0.003.json, with `_weights/` (3 files) and `_bigtest_probs.npz`.
+
+**Big test set (200,000 d=3 shots, MWPM 1,327 errors, correlated matching 1,370)**
+
+| Run | Train graphs | Seed 0 | Seed 1 | Seed 2 | Mean | Range | Ratio to MWPM |
+|---|---|---|---|---|---|---|---|
+| C0 (S7) | 35k | 1,529 | 1,518 | 1,557 | 1,534.7 | 39 | 1.16 |
+| C4 (S7) | 35k | 1,458 | 1,448 | 1,409 | 1,438.3 | 49 | 1.08 |
+| C0 (S7) | 100k | 1,342 | 1,341 | 1,382 | 1,355.0 | 41 | 1.02 |
+| C4 | 100k | 1,275 | 1,311 | 1,283 | 1,289.7 | 36 | 0.97 |
+
+- No run failed to train.
+- **Decision rule, C4 vs C0 at 100k: passes.** The worst C4 run (1,311) is below the best C0 run (1,341). Gap 65.3, ranges 41 and 36 (`rule.d3_resln_v2_100k_vs_d3_base_v2_100k`).
+
+**Against the classical decoders** (paired per run, exact binomial; fixed = decoder wrong & GNN right)
+
+| Run | vs MWPM: fixed / newly wrong, p | vs correlated matching: fixed / newly wrong, p |
+|---|---|---|
+| C4 100k, seed 0 | 332 / 280, p = 0.039 | 512 / 417, p = 0.0020 |
+| C4 100k, seed 1 | 285 / 269, p = 0.52 | 526 / 467, p = 0.066 |
+| C4 100k, seed 2 | 324 / 280, p = 0.080 | 517 / 430, p = 0.0052 |
+| C0 100k (S7), seeds 0 / 1 / 2 | 392 / 407, 330 / 344, 312 / 367; p = 0.62, 0.62, 0.038 | (not tabulated) |
+
+- **C4 at 100k has fewer errors than MWPM in every run:** mean 37.3 fewer (2.8%). Paired, only seed 0 is significant on its own (p = 0.039). By the cross-run rule against MWPM's single value, the gap (37.3) only just exceeds the C4 range (36).
+- **C0 at 100k is level with MWPM:** p = 0.62 and 0.62; seed 2 is worse (p = 0.038).
+
+**Primary test set (7,500 shots, MWPM 49):** C4 100k 40 / 48 / 40.
+
+**Training:** best_epoch 43 / 26 / 53. Epoch-1 val loss 0.169 / 0.047 / 0.052. Best val loss (train loss at that epoch) 0.0193 (0.0207) / 0.0196 (0.0237) / 0.0193 (0.0197). 75.2 / 76.6 / 78.0 s per epoch (CPU). Big-test inference 49.7 to 51.7 s per run.
+
+**Data factor at d=3** (`d3.data_factor`)
+- C0's line through its 35k and 100k means: -171.1 errors per e-fold of data. C4's: -141.6.
+- C4's gap is 96.3 at 35k and 65.3 at 100k. On C0's line, that is 1.76x the data at 35k and 1.46x at 100k.
+
+## Interpretation (Phase 3, S8)
+- **C4 helps at d=3 at both sizes** (rule passed at 35k and 100k), so the direction of the effect transfers from d=5.
+- **The size of the effect does not stay constant at d=3.** The curves converge: C4's slope is flatter (-142 vs -171 per e-fold), and its data factor falls from 1.76x to 1.46x. At d=5 the curves were parallel over 35k to 300k (S6). A plausible reading, not tested: at d=3 both models are close to the best accuracy reachable, where every change is worth less. With two sizes per curve, straightness at d=3 is not tested.
+- **At d=3 and 100k shots, the matching-graph GNN reaches MWPM's level:** C4 is below MWPM in all 3 runs, but significantly so in only 1 of 3 paired tests. State it as "level with, nominally below MWPM", not "beats MWPM". It beats correlated matching more clearly (2 of 3 runs significant), but correlated matching is weaker than MWPM at d=3.
+- **For the paper (P1):** the exchange rate is constant across data sizes at d=5 (1.6x), and is 1.5x to 1.8x and shrinking with data at d=3. The d=5 result stays the headline; d=3 bounds it.
+- **Next:** session C at d=5 (residual-only, LayerNorm-only) when the GPU quota resets.
