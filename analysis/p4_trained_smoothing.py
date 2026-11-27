@@ -58,13 +58,27 @@ from torch_geometric.data import Batch  # noqa: E402
 import qec_run  # noqa: E402
 from gnn_models import _POOLS  # noqa: E402
 
-D, P = 5, 0.003
-EVAL_SET = "data/eval_d5_p0.003_seed12347_200k.npz"
-RUNS = {
-    "base_35k": "results/run_20261124T074644Z_d5_p0.003.json",
-    "resln_35k": "results/run_20261124T063211Z_d5_p0.003.json",
-    "final": "results/run_20261123T232850Z_d5_p0.003.json",
+P = 0.003
+# Per code distance: stored eval set, trained runs, and which run's model settings
+# build the untrained (init) models. --d picks one; d=5 is the default and unchanged.
+CONFIGS = {
+    5: dict(eval_set="data/eval_d5_p0.003_seed12347_200k.npz",
+            runs={"base_35k": "results/run_20261124T074644Z_d5_p0.003.json",
+                  "resln_35k": "results/run_20261124T063211Z_d5_p0.003.json",
+                  "final": "results/run_20261123T232850Z_d5_p0.003.json"},
+            init_from={"init_base": "base_35k", "init_resln": "resln_35k"},
+            out="p4_trained_smoothing.json"),
+    3: dict(eval_set="data/eval_d3_p0.003_seed12347_200k.npz",
+            runs={"base_35k": "results/run_20261125T123552Z_d3_p0.003.json",
+                  "resln_35k": "results/run_20261125T141354Z_d3_p0.003.json",
+                  "base_100k": "results/run_20261125T181032Z_d3_p0.003.json",
+                  "resln_100k": "results/run_20261126T102141Z_d3_p0.003.json"},
+            init_from={"init_base": "base_35k", "init_resln": "resln_35k"},
+            out="p4_trained_smoothing_d3.json"),
 }
+D = 5                                   # set from --d in main()
+EVAL_SET = CONFIGS[D]["eval_set"]
+RUNS = CONFIGS[D]["runs"]
 SEEDS = (0, 1, 2)
 BATCH = 250
 
@@ -211,11 +225,18 @@ def analyse(model, shots, n_probe, src, dst, bnd_idx):
 
 
 def main():
+    global D, EVAL_SET, RUNS
     ap = argparse.ArgumentParser()
+    ap.add_argument("--d", type=int, default=5, choices=sorted(CONFIGS))
     ap.add_argument("--n-shots", type=int, default=4000)
     ap.add_argument("--n-probe", type=int, default=1000)
-    ap.add_argument("--out", default=str(HERE / "phase3_results" / "p4_trained_smoothing.json"))
+    ap.add_argument("--out", default=None,
+                    help="default: analysis/phase3_results/p4_trained_smoothing.json for d=5, "
+                         "..._d3.json for d=3")
     a = ap.parse_args()
+    D, EVAL_SET, RUNS = a.d, CONFIGS[a.d]["eval_set"], CONFIGS[a.d]["runs"]
+    if a.out is None:
+        a.out = str(HERE / "phase3_results" / CONFIGS[a.d]["out"])
     torch.set_num_threads(8)
     t0 = time.perf_counter()
 
@@ -278,7 +299,7 @@ def main():
                   f"{layers[4]['cos_all']:.3f}, eff.rank {layers[4]['effective_rank']:.2f}, "
                   f"probe {layers[4]['probe_fired_bit']['balanced_accuracy']:.3f} "
                   f"({time.perf_counter() - t0:.0f} s)")
-    for label, hp_from in (("init_base", "base_35k"), ("init_resln", "resln_35k")):
+    for label, hp_from in CONFIGS[D]["init_from"].items():
         for seed in SEEDS:
             model = build_init(hps[hp_from], seed)
             layers, logit = analyse(model, shots, a.n_probe, src, dst, bnd_idx)
